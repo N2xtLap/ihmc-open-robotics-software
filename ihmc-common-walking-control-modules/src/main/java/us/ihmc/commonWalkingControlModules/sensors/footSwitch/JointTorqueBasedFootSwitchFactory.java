@@ -97,15 +97,15 @@ public class JointTorqueBasedFootSwitchFactory implements FootSwitchFactory
    {
       if (contactThresholdTorque == null)
       {
-         contactThresholdTorque = new DoubleParameter(namePrefix + "ContactThresholdJointTorque", registry, defaultContactThresholdTorque);
-         higherContactThresholdTorque = new DoubleParameter(namePrefix + "HigherContactThresholdJointTorque", registry, defaultHigherContactThresholdTorque);
-         contactForceThreshold = new DoubleParameter(namePrefix + "JacobianTThresholdForce", registry, defaultContactThresholdForce);
-         contactWindowSize = new YoInteger(namePrefix + "ContactThresholdJointTorqueWindowSize", registry);
+         contactThresholdTorque = new DoubleParameter( "ContactThresholdJointTorque", registry, defaultContactThresholdTorque);
+         higherContactThresholdTorque = new DoubleParameter("HigherContactThresholdJointTorque", registry, defaultHigherContactThresholdTorque);
+         contactForceThreshold = new DoubleParameter("JacobianTThresholdForce", registry, defaultContactThresholdForce);
+         contactWindowSize = new YoInteger("ContactThresholdJointTorqueWindowSize", registry);
          contactWindowSize.set(defaultContactWindowSize);
-         compensateGravity = new BooleanParameter(namePrefix + "JacobianTCompensateGravity", registry, true);
-         useJacobianTranspose = new BooleanParameter(namePrefix + "UseJacobianTranspose", registry, defaultUseJacobianTranspose);
-         verticalVelocityThreshold = new DoubleParameter(namePrefix + "VerticalVelocityThreshold", registry, defaultVerticalVelocityThreshold);
-         horizontalVelocityThreshold = new DoubleParameter(namePrefix + "HorizontalVelocityThreshold", registry, defaultHorizontalVelocityThreshold);
+         compensateGravity = new BooleanParameter("JacobianTCompensateGravity", registry, false);
+         useJacobianTranspose = new BooleanParameter("UseJacobianTranspose", registry, defaultUseJacobianTranspose);
+         verticalVelocityThreshold = new DoubleParameter("VerticalVelocityThreshold", registry, defaultVerticalVelocityThreshold);
+         horizontalVelocityThreshold = new DoubleParameter("HorizontalVelocityThreshold", registry, defaultHorizontalVelocityThreshold);
       }
 
       return new JointTorqueBasedFootSwitch(namePrefix,
