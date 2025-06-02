@@ -47,7 +47,7 @@ public class SteppableRegionsCalculator
                                                         parameters,
                                                         terrainMapData.getTerrainMapCenter().getX(),
                                                         terrainMapData.getTerrainMapCenter().getY(),
-                                                        terrainMapData.getCenterIndex(),
+                                                        terrainMapData.getGridResolutionXY(),
                                                         terrainMapData.getCenterIndex());
    }
 
