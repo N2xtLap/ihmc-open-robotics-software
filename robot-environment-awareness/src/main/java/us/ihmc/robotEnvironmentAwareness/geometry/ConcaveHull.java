@@ -128,7 +128,7 @@ public class ConcaveHull implements Iterable<Point2D>
 
    public void addVertex(double x, double y)
    {
-      hullVertices.add(new Point2D(x, y));
+      addVertex(new Point2D(x, y));
    }
 
    public void addVertex(Point2D vertex)
