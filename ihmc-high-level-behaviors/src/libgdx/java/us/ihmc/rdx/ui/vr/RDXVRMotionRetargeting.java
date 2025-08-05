@@ -1,5 +1,6 @@
 package us.ihmc.rdx.ui.vr;
 
+import us.ihmc.euclid.matrix.RotationMatrix;
 import us.ihmc.euclid.matrix.interfaces.RotationMatrixReadOnly;
 import us.ihmc.euclid.referenceFrame.FramePose3D;
 import us.ihmc.euclid.referenceFrame.FrameVector3D;
@@ -8,7 +9,9 @@ import us.ihmc.euclid.transform.RigidBodyTransform;
 import us.ihmc.euclid.tuple3D.Point3D;
 import us.ihmc.euclid.tuple3D.Vector3D;
 import us.ihmc.euclid.tuple3D.interfaces.Vector3DReadOnly;
+import us.ihmc.euclid.tuple4D.Quaternion;
 import us.ihmc.euclid.yawPitchRoll.YawPitchRoll;
+import us.ihmc.log.LogTools;
 import us.ihmc.motionRetargeting.RetargetingParameters;
 import us.ihmc.motionRetargeting.VRTrackedSegmentType;
 import us.ihmc.rdx.ui.graphics.RDXReferenceFrameGraphic;
@@ -160,8 +163,12 @@ public class RDXVRMotionRetargeting
          newPelvisFramePose.changeFrame(initialPelvisFrame);
          newPelvisFramePose.getRotation().setYawPitchRoll(0.0, 0.0, 0.0);
          newPelvisFramePose.changeFrame(ReferenceFrame.getWorldFrame());
-         double midFeetYaw = 0.5 * (ghostRobotModel.getSoleFrame(RobotSide.LEFT).getTransformToWorldFrame().getRotation().getYaw() + ghostRobotModel.getSoleFrame(RobotSide.RIGHT).getTransformToWorldFrame().getRotation().getYaw());
-         newPelvisFramePose.getRotation().setYawPitchRoll(midFeetYaw, newPelvisFramePose.getRotation().getPitch(), newPelvisFramePose.getRotation().getRoll());
+
+         RotationMatrix midFeetRotation = new RotationMatrix();
+         midFeetRotation.interpolate(ghostRobotModel.getSoleFrame(RobotSide.LEFT).getTransformToWorldFrame().getRotation(), ghostRobotModel.getSoleFrame(RobotSide.RIGHT).getTransformToWorldFrame().getRotation(), 0.5);
+         LogTools.warn("left {}, right {}", Math.toDegrees(ghostRobotModel.getSoleFrame(RobotSide.LEFT).getTransformToWorldFrame().getRotation().getYaw()), Math.toDegrees(ghostRobotModel.getSoleFrame(RobotSide.RIGHT).getTransformToWorldFrame().getRotation().getYaw()));
+         LogTools.info(Math.toDegrees(midFeetRotation.getYaw()));
+         newPelvisFramePose.getRotation().setYawPitchRoll(midFeetRotation.getYaw(), newPelvisFramePose.getRotation().getPitch(), newPelvisFramePose.getRotation().getRoll());
          constrainedPelvisFrame.update();
 
          retargetedFrames.put(WAIST, constrainedPelvisFrame);
