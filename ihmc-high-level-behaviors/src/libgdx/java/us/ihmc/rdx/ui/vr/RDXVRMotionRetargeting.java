@@ -166,8 +166,6 @@ public class RDXVRMotionRetargeting
 
          RotationMatrix midFeetRotation = new RotationMatrix();
          midFeetRotation.interpolate(ghostRobotModel.getSoleFrame(RobotSide.LEFT).getTransformToWorldFrame().getRotation(), ghostRobotModel.getSoleFrame(RobotSide.RIGHT).getTransformToWorldFrame().getRotation(), 0.5);
-         LogTools.warn("left {}, right {}", Math.toDegrees(ghostRobotModel.getSoleFrame(RobotSide.LEFT).getTransformToWorldFrame().getRotation().getYaw()), Math.toDegrees(ghostRobotModel.getSoleFrame(RobotSide.RIGHT).getTransformToWorldFrame().getRotation().getYaw()));
-         LogTools.info(Math.toDegrees(midFeetRotation.getYaw()));
          newPelvisFramePose.getRotation().setYawPitchRoll(midFeetRotation.getYaw(), newPelvisFramePose.getRotation().getPitch(), newPelvisFramePose.getRotation().getRoll());
          constrainedPelvisFrame.update();
 
