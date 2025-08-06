@@ -11,6 +11,7 @@ import org.lwjgl.openvr.InputDigitalActionData;
 import us.ihmc.avatar.drcRobot.ROS2SyncedRobotModel;
 import us.ihmc.avatar.networkProcessor.kinematicsStreamingToolboxModule.KinematicsStreamingToolboxParameters;
 import us.ihmc.avatar.ros2.ROS2ControllerHelper;
+import us.ihmc.commons.thread.Notification;
 import us.ihmc.euclid.referenceFrame.FramePose3D;
 import us.ihmc.euclid.referenceFrame.ReferenceFrame;
 import us.ihmc.motionRetargeting.RetargetingParameters;
@@ -40,6 +41,10 @@ public class RDXVRModeManager
 
    private RDXVRManager vrManager;
    private RDXVRMode mode = RDXVRMode.INPUTS_DISABLED;
+   private RDXVRPanelPlacementMode panelPlacementMode = RDXVRPanelPlacementMode.MANUAL_PLACEMENT;
+   private final ImBoolean showFloatingVideoPanel = new ImBoolean(false);
+   private final Notification showFloatVideoPanelNotification = new Notification();
+
    private ImBoolean interactablesEnabled;
 
    private RDXVRStereoVision stereoVision;
@@ -204,6 +209,25 @@ public class RDXVRModeManager
 
    public void renderImGuiWidgets()
    {
+      if (ImGui.checkbox(labels.get("Floating video panel"), showFloatingVideoPanel))
+      {
+         if (showFloatingVideoPanel.get())
+            showFloatVideoPanelNotification.set();
+      }
+      if (showFloatingVideoPanel.get())
+      {
+         ImGui.sameLine();
+         if (ImGui.radioButton(labels.get("Manually place"), panelPlacementMode == RDXVRPanelPlacementMode.MANUAL_PLACEMENT))
+         {
+            panelPlacementMode = RDXVRPanelPlacementMode.MANUAL_PLACEMENT;
+         }
+         ImGui.sameLine();
+         if (ImGui.radioButton(labels.get("Follow headset"), panelPlacementMode == RDXVRPanelPlacementMode.FOLLOW_HEADSET))
+         {
+            panelPlacementMode = RDXVRPanelPlacementMode.FOLLOW_HEADSET;
+         }
+      }
+
       if (ImGui.radioButton(labels.get(RDXVRMode.INPUTS_DISABLED.getReadableName()), mode == RDXVRMode.INPUTS_DISABLED))
       {
          mode = RDXVRMode.INPUTS_DISABLED;
@@ -316,5 +340,25 @@ public class RDXVRModeManager
    public RDXVRStereoVision getStereoVision()
    {
       return stereoVision;
+   }
+
+   public ImBoolean getShowFloatingVideoPanel()
+   {
+      return showFloatingVideoPanel;
+   }
+
+   public Notification getShowFloatVideoPanelNotification()
+   {
+      return showFloatVideoPanelNotification;
+   }
+
+   public RDXVRPanelPlacementMode getVideoPanelPlacementMode()
+   {
+      return panelPlacementMode;
+   }
+
+   public void setVideoPanelPlacementMode(RDXVRPanelPlacementMode panelPlacementMode)
+   {
+      this.panelPlacementMode = panelPlacementMode;
    }
 }
