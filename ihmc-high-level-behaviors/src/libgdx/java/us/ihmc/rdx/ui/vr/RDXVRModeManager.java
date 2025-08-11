@@ -1,6 +1,7 @@
 package us.ihmc.rdx.ui.vr;
 
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g3d.Renderable;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
@@ -22,6 +23,7 @@ import us.ihmc.rdx.imgui.RDXPanel;
 import us.ihmc.rdx.sceneManager.RDXSceneLevel;
 import us.ihmc.rdx.ui.RDXBaseUI;
 import us.ihmc.rdx.ui.RDXJoystickBasedStepping;
+import us.ihmc.rdx.ui.graphics.RDXStereoImagePanel;
 import us.ihmc.rdx.ui.graphics.ros2.RDXROS2RobotVisualizer;
 import us.ihmc.rdx.ui.hands.RDXHandManager;
 import us.ihmc.rdx.ui.teleoperation.RDXTeleoperationManager;
@@ -34,6 +36,7 @@ import us.ihmc.scs2.definition.robot.RobotDefinition;
 import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.Set;
+import java.util.function.Supplier;
 
 public class RDXVRModeManager
 {
@@ -41,13 +44,9 @@ public class RDXVRModeManager
 
    private RDXVRManager vrManager;
    private RDXVRMode mode = RDXVRMode.INPUTS_DISABLED;
-   private RDXVRPanelPlacementMode panelPlacementMode = RDXVRPanelPlacementMode.MANUAL_PLACEMENT;
-   private final ImBoolean showFloatingVideoPanel = new ImBoolean(false);
-   private final Notification showFloatVideoPanelNotification = new Notification();
 
    private ImBoolean interactablesEnabled;
 
-   private RDXVRStereoVision stereoVision;
    private RDXVRFootstepPlacement footstepPlacer;
    private RDXHandManager handManager;
 
@@ -96,7 +95,6 @@ public class RDXVRModeManager
          }
       }
       footstepPlacer = new RDXVRFootstepPlacement(baseUI.getVRManager().getContext(), syncedRobot, controllerHelper);
-      stereoVision = new RDXVRStereoVision(syncedRobot.getReferenceFrames());
 
       if (syncedRobot.getRobotModel().getRobotVersion().hasArm(RobotSide.LEFT) ||
           syncedRobot.getRobotModel().getRobotVersion().hasArm(RobotSide.RIGHT))
@@ -209,25 +207,6 @@ public class RDXVRModeManager
 
    public void renderImGuiWidgets()
    {
-      if (ImGui.checkbox(labels.get("Floating video panel"), showFloatingVideoPanel))
-      {
-         if (showFloatingVideoPanel.get())
-            showFloatVideoPanelNotification.set();
-      }
-      if (showFloatingVideoPanel.get())
-      {
-         ImGui.sameLine();
-         if (ImGui.radioButton(labels.get("Manually place"), panelPlacementMode == RDXVRPanelPlacementMode.MANUAL_PLACEMENT))
-         {
-            panelPlacementMode = RDXVRPanelPlacementMode.MANUAL_PLACEMENT;
-         }
-         ImGui.sameLine();
-         if (ImGui.radioButton(labels.get("Follow headset"), panelPlacementMode == RDXVRPanelPlacementMode.FOLLOW_HEADSET))
-         {
-            panelPlacementMode = RDXVRPanelPlacementMode.FOLLOW_HEADSET;
-         }
-      }
-
       if (ImGui.radioButton(labels.get(RDXVRMode.INPUTS_DISABLED.getReadableName()), mode == RDXVRMode.INPUTS_DISABLED))
       {
          mode = RDXVRMode.INPUTS_DISABLED;
@@ -272,11 +251,6 @@ public class RDXVRModeManager
       }
    }
 
-   public void render()
-   {
-      stereoVision.renderProjection();
-   }
-
    private void getRenderables(Array<Renderable> renderables, Pool<Renderable> pool, Set<RDXSceneLevel> sceneLevels)
    {
       if (sceneLevels.contains(RDXSceneLevel.VIRTUAL))
@@ -292,9 +266,6 @@ public class RDXVRModeManager
             case JOYSTICK_WALKING -> joystickBasedStepping.getRenderables(renderables, pool);
          }
 
-         if (stereoVision.isEnabled())
-            stereoVision.getDualBlackflySphericalProjection().getRenderables(renderables, pool, sceneLevels);
-
          if (vrModeControls.getRenderOnLeftHand().get())
             vrModeControls3DPanel.getRenderables(renderables, pool);
       }
@@ -306,7 +277,6 @@ public class RDXVRModeManager
       if (kinematicsStreaming != null)
          kinematicsStreaming.destroy();
       joystickBasedStepping.destroy();
-      stereoVision.getDualBlackflySphericalProjection().shutdown();
       footstepPlacer.destroy();
       footstepStreaming.destroy();
    }
@@ -337,28 +307,8 @@ public class RDXVRModeManager
       return joystickBasedStepping;
    }
 
-   public RDXVRStereoVision getStereoVision()
+   public RDXVRModeControls getControls()
    {
-      return stereoVision;
-   }
-
-   public ImBoolean getShowFloatingVideoPanel()
-   {
-      return showFloatingVideoPanel;
-   }
-
-   public Notification getShowFloatVideoPanelNotification()
-   {
-      return showFloatVideoPanelNotification;
-   }
-
-   public RDXVRPanelPlacementMode getVideoPanelPlacementMode()
-   {
-      return panelPlacementMode;
-   }
-
-   public void setVideoPanelPlacementMode(RDXVRPanelPlacementMode panelPlacementMode)
-   {
-      this.panelPlacementMode = panelPlacementMode;
+      return vrModeControls;
    }
 }
