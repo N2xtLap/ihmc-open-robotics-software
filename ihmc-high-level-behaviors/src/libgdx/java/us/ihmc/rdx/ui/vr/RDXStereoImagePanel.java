@@ -1,4 +1,4 @@
-package us.ihmc.rdx.ui.graphics;
+package us.ihmc.rdx.ui.vr;
 
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g3d.Renderable;
@@ -6,7 +6,6 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
 import us.ihmc.euclid.referenceFrame.ReferenceFrame;
 import us.ihmc.rdx.sceneManager.RDXSceneLevel;
-import us.ihmc.rdx.ui.vr.RDXVRModeManager;
 import us.ihmc.rdx.vr.RDXVRContext;
 
 import java.util.Set;

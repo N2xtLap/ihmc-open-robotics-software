@@ -1,7 +1,6 @@
 package us.ihmc.rdx.ui.vr;
 
 import com.badlogic.gdx.graphics.Color;
-import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g3d.Renderable;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
@@ -12,7 +11,6 @@ import org.lwjgl.openvr.InputDigitalActionData;
 import us.ihmc.avatar.drcRobot.ROS2SyncedRobotModel;
 import us.ihmc.avatar.networkProcessor.kinematicsStreamingToolboxModule.KinematicsStreamingToolboxParameters;
 import us.ihmc.avatar.ros2.ROS2ControllerHelper;
-import us.ihmc.commons.thread.Notification;
 import us.ihmc.euclid.referenceFrame.FramePose3D;
 import us.ihmc.euclid.referenceFrame.ReferenceFrame;
 import us.ihmc.motionRetargeting.RetargetingParameters;
@@ -23,7 +21,6 @@ import us.ihmc.rdx.imgui.RDXPanel;
 import us.ihmc.rdx.sceneManager.RDXSceneLevel;
 import us.ihmc.rdx.ui.RDXBaseUI;
 import us.ihmc.rdx.ui.RDXJoystickBasedStepping;
-import us.ihmc.rdx.ui.graphics.RDXStereoImagePanel;
 import us.ihmc.rdx.ui.graphics.ros2.RDXROS2RobotVisualizer;
 import us.ihmc.rdx.ui.hands.RDXHandManager;
 import us.ihmc.rdx.ui.teleoperation.RDXTeleoperationManager;
@@ -36,7 +33,6 @@ import us.ihmc.scs2.definition.robot.RobotDefinition;
 import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.Set;
-import java.util.function.Supplier;
 
 public class RDXVRModeManager
 {

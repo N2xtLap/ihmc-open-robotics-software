@@ -1,4 +1,4 @@
-package us.ihmc.rdx.ui.graphics;
+package us.ihmc.rdx.ui.vr;
 
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Mesh;
@@ -25,7 +25,6 @@ import us.ihmc.euclid.transform.RigidBodyTransform;
 import us.ihmc.rdx.sceneManager.RDXSceneLevel;
 import us.ihmc.rdx.tools.LibGDXTools;
 import us.ihmc.rdx.tools.RDXModelBuilder;
-import us.ihmc.rdx.ui.vr.RDXVRModeManager;
 import us.ihmc.rdx.vr.RDXVRContext;
 import us.ihmc.rdx.vr.RDXVRPickResult;
 import us.ihmc.robotics.interaction.PointCollidable;
@@ -255,10 +254,28 @@ public class RDX3DSituatedImagePanel
 
    public void destroy()
    {
+      // Dispose the texture if we own it
+      if (texture != null)
+      {
+         texture.dispose();
+         texture = null;
+      }
+
+      // Dispose the main model
       if (modelInstance != null)
-         modelInstance.destroy();
+      {
+         if (modelInstance.model != null)
+            modelInstance.model.dispose();
+         modelInstance = null;
+      }
+
+      // Dispose the hover box mesh model
       if (hoverBoxMesh != null)
-         hoverBoxMesh.destroy();
+      {
+         if (hoverBoxMesh.model != null)
+            hoverBoxMesh.model.dispose();
+         hoverBoxMesh = null;
+      }
    }
 
    public ModelInstance getModelInstance()
