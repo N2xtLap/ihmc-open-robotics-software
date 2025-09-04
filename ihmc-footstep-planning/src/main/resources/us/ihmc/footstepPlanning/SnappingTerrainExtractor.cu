@@ -11,7 +11,7 @@ extern "C"
 #define FOOT_WIDTH 5
 #define MIN_DISTANCE_FROM_BASE_OF_CLIFF 6
 #define MIN_DISTANCE_FROM_EDGE_OF_CLIFF 7
-#define SCALED_FOOT_POLYGON_PERCENTAGE 8
+#define SCALED_FOOT_POLYGON_DISTANCE 8
 #define CLIFF_START_HEIGHT_TO_AVOID 9
 #define CLIFF_END_HEIGHT_TO_AVOID 10
 #define MIN_SUPPORT_AREA_FRACTION 11
@@ -210,7 +210,7 @@ __global__ void computeTerrainData(float *heightMap, size_t pitchHeightMap,
     //////////// Check to make sure we're not stepping too near a cliff base or top
     if (!failed)
     {
-        int cliff_offset_indices = ceil(params[SCALED_FOOT_POLYGON_PERCENTAGE] / map_resolution);
+        int cliff_offset_indices = ceil(params[SCALED_FOOT_POLYGON_DISTANCE] / map_resolution);
 
         int min_x = max(terrain_map_index.x - cliff_offset_indices, 0);
         int max_x = min(terrain_map_index.x + cliff_offset_indices + 1, cells_per_axis_for_checking);
