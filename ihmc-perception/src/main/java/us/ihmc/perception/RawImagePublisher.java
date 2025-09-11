@@ -19,6 +19,7 @@ import us.ihmc.perception.imageMessage.PixelFormat;
 import us.ihmc.perception.opencv.OpenCVTools;
 import us.ihmc.perception.streaming.ROS2SRTSensorStreamer;
 import us.ihmc.perception.tools.PerceptionMessageTools;
+import us.ihmc.perception.tools.RawImageTools;
 import us.ihmc.ros2.ROS2Node;
 import us.ihmc.ros2.ROS2Topic;
 
@@ -34,6 +35,7 @@ public class RawImagePublisher implements AutoCloseable
    private final ImageMessage imageMessage;
    private final Image ros2Image;
 
+   private float publishScale = 1.0f;
    private boolean destroyed = false;
 
    public RawImagePublisher(ROS2Node ros2Node)
@@ -52,6 +54,11 @@ public class RawImagePublisher implements AutoCloseable
       ros2Helper = new ROS2Helper(ros2Node);
       imageMessage = new ImageMessage();
       ros2Image = new Image();
+   }
+
+   public void setPublishScale(float publishScale)
+   {
+      this.publishScale = publishScale;
    }
 
    public void publishImage(ROS2Topic<? extends Packet<?>> imageTopic, RawImage imageToPublish)

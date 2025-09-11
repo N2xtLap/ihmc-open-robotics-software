@@ -287,6 +287,7 @@ public class PerceptionMessageTools
    }
 
    // TODO: Support non-rectified images and stereo images
+   // TODO: Make separate method that only takes in the cameraIntrinsics and transformToWorld
    public static void packCameraInfo(RawImage image, String cameraFrameId, CameraInfo cameraInfoToPack)
    {
       // Set the header

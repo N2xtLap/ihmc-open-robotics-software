@@ -67,3 +67,5 @@ slamWrapperDependencies {
    api("us.ihmc:javacpp:1.5.11-ihmc-2")
    api("us.ihmc:ihmc-java-toolkit:source")
 }
+
+app.entrypoint("IsaacROSFoundationPoseDemo", "us.ihmc.perception.demo.IsaacROSFoundationPoseDemo")
