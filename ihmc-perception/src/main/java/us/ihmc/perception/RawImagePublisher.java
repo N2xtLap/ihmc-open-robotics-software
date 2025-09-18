@@ -16,7 +16,7 @@ import us.ihmc.perception.imageMessage.CompressionType;
 import us.ihmc.perception.imageMessage.PixelFormat;
 import us.ihmc.perception.opencv.OpenCVTools;
 import us.ihmc.perception.streaming.ROS2SRTSensorStreamer;
-import us.ihmc.perception.tools.ImageTools;
+import us.ihmc.perception.tools.RawImageTools;
 import us.ihmc.perception.tools.PerceptionMessageTools;
 import us.ihmc.ros2.ROS2Node;
 import us.ihmc.ros2.ROS2Topic;
@@ -102,7 +102,7 @@ public class RawImagePublisher implements AutoCloseable
 
       if (publishScale != 1.0)
       {
-         scaledImage = ImageTools.scale(imageToCompress, publishScale);
+         scaledImage = RawImageTools.scale(imageToCompress, publishScale);
          imageToCompress = scaledImage;
       }
 
@@ -118,7 +118,7 @@ public class RawImagePublisher implements AutoCloseable
             break;
 
          case BGRA8: // BGRA image -> convert to BGR, then compress using nvJPEG
-            colorConvertedImage = ImageTools.convertColor(imageToCompress, PixelFormat.BGR8);
+            colorConvertedImage = RawImageTools.convertColor(imageToCompress, PixelFormat.BGR8);
             imageToCompress = colorConvertedImage;
          case BGR8: // BGR image -> compress using nvJPEG
             compressedImage = new BytePointer(OpenCVTools.dataSize(imageToCompress.getGpuImageMat()));
@@ -127,7 +127,7 @@ public class RawImagePublisher implements AutoCloseable
             break;
 
          case RGBA8: // RGBA image -> convert to RGB, then compress using nvJPEG
-            colorConvertedImage = ImageTools.convertColor(imageToCompress, PixelFormat.RGB8);
+            colorConvertedImage = RawImageTools.convertColor(imageToCompress, PixelFormat.RGB8);
             imageToCompress = colorConvertedImage;
          case RGB8: // RGB image -> compress using nvJPEG
             compressedImage = new BytePointer(OpenCVTools.dataSize(imageToCompress.getGpuImageMat()));
@@ -166,7 +166,7 @@ public class RawImagePublisher implements AutoCloseable
       // Scale the image if needed
       if (publishScale != 1.0)
       {
-         scaledImage = ImageTools.scale(imageToPublish, publishScale);
+         scaledImage = RawImageTools.scale(imageToPublish, publishScale);
          imageToPublish = scaledImage;
       }
 
@@ -189,7 +189,7 @@ public class RawImagePublisher implements AutoCloseable
       // Get the correct intrinsics
       CameraIntrinsics intrinsics = image.getIntrinsicsCopy();
       if (publishScale != 1.0)
-         intrinsics = ImageTools.scale(intrinsics, publishScale);
+         intrinsics = RawImageTools.scale(intrinsics, publishScale);
 
       // Create and pack a CameraInfo message
       CameraInfo cameraInfo = new CameraInfo();
