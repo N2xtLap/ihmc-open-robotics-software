@@ -13,7 +13,7 @@ import us.ihmc.perception.streaming.ROS2SRTSensorStreamer;
 import us.ihmc.perception.streaming.ROS2SRTVideoSubscriber;
 import us.ihmc.rdx.Lwjgl3ApplicationAdapter;
 import us.ihmc.rdx.ui.RDXBaseUI;
-import us.ihmc.rdx.ui.graphics.RDXOpenCVVideoVisualizer;
+import us.ihmc.rdx.ui.graphics.RDXImageVisualizer;
 import us.ihmc.rdx.ui.graphics.RDXRawImagePointCloudVisualizer;
 import us.ihmc.ros2.ROS2Node;
 import us.ihmc.ros2.ROS2NodeBuilder;
@@ -40,8 +40,8 @@ public class RDXDepthStreamingDemo
    private final RepeatingTaskThread zedPublishThread = new RepeatingTaskThread("ZEDPublish", this::publishZED);
 
    private final RDXBaseUI baseUI = new RDXBaseUI(getClass().getSimpleName());
-   private final RDXOpenCVVideoVisualizer sentDepthVisualizer = new RDXOpenCVVideoVisualizer("Sent Colorized Depth", "Sent Colorized Depth", false);
-   private final RDXOpenCVVideoVisualizer receivedDepthVisualizer = new RDXOpenCVVideoVisualizer("Received Colorized Depth", "Received Colorized Depth", false);
+   private final RDXImageVisualizer sentDepthVisualizer = new RDXImageVisualizer("Sent Colorized Depth", "Sent Colorized Depth", false);
+   private final RDXImageVisualizer receivedDepthVisualizer = new RDXImageVisualizer("Received Colorized Depth", "Received Colorized Depth", false);
    private final RDXRawImagePointCloudVisualizer pointCloudVisualizer = new RDXRawImagePointCloudVisualizer("De-Colorized Point Cloud");
 
    public RDXDepthStreamingDemo() throws Exception
@@ -105,7 +105,7 @@ public class RDXDepthStreamingDemo
          RawImage colorizedDepthImage = depthImage.replaceImage(colorizedDepth, PixelFormat.YUV444P);
 
          opencv_imgproc.cvtColor(colorizedDepthImage.getCpuImageMat(), rgbMat, opencv_imgproc.COLOR_YUV2RGB);
-         sentDepthVisualizer.setImage(rgbMat);
+         sentDepthVisualizer.setImage(rgbMat, PixelFormat.RGB8);
 
          sensorStreamer.sendFrame(PerceptionAPI.SRT_ZED_DEPTH_STREAM_STATUS, colorizedDepthImage);
          sensorStreamer.sendFrame(PerceptionAPI.SRT_ZED_LEFT_COLOR_STREAM_STATUS, colorImage);
@@ -122,7 +122,7 @@ public class RDXDepthStreamingDemo
 
       Mat rgbMat = new Mat();
       opencv_imgproc.cvtColor(colorizedDepth.getCpuImageMat(), rgbMat, opencv_imgproc.COLOR_YUV2RGB);
-      receivedDepthVisualizer.setImage(rgbMat);
+      receivedDepthVisualizer.setImage(rgbMat, PixelFormat.RGB8);
 
       pointCloudVisualizer.setDepthImage(colorizedDepth);
 
