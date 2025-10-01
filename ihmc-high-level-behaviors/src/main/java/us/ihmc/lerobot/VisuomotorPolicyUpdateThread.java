@@ -1,14 +1,19 @@
 package us.ihmc.lerobot;
 
 import behavior_msgs.msg.dds.VisuomotorOperationMessage;
-import std_msgs.msg.dds.Float32MultiArray;
-import std_msgs.msg.dds.Int32;
+import org.bytedeco.opencv.global.opencv_core;
+import org.bytedeco.opencv.global.opencv_imgproc;
+import org.bytedeco.opencv.opencv_core.Mat;
+import org.bytedeco.opencv.opencv_core.Point;
+import org.bytedeco.opencv.opencv_core.Rect;
+import org.bytedeco.opencv.opencv_core.Size;
 import toolbox_msgs.msg.dds.KinematicsStreamingToolboxInputMessage;
 import toolbox_msgs.msg.dds.KinematicsToolboxRigidBodyMessage;
 import toolbox_msgs.msg.dds.ToolboxStateMessage;
 import us.ihmc.avatar.drcRobot.DRCRobotModel;
 import us.ihmc.avatar.drcRobot.ROS2SyncedRobotModel;
 import us.ihmc.commons.thread.RepeatingTaskThread;
+import us.ihmc.commons.thread.Throttler;
 import us.ihmc.commons.thread.TypedNotification;
 import us.ihmc.commons.time.FrequencyCalculator;
 import us.ihmc.communication.ROS2Tools;
@@ -23,13 +28,22 @@ import us.ihmc.communication.ros2.sync.ROS2PeerClockOffsetEstimator;
 import us.ihmc.euclid.geometry.Pose3D;
 import us.ihmc.euclid.referenceFrame.FramePose3D;
 import us.ihmc.euclid.referenceFrame.ReferenceFrame;
-import us.ihmc.idl.IDLSequence;
+import us.ihmc.openpi.OpenpiClient;
+import us.ihmc.perception.RawImage;
+import us.ihmc.perception.imageMessage.PixelFormat;
 import us.ihmc.robotics.robotSide.RobotSide;
 import us.ihmc.robotics.robotSide.SideDependentList;
 import us.ihmc.ros2.ROS2Node;
 import us.ihmc.ros2.ROS2NodeBuilder;
 import us.ihmc.ros2.ROS2Publisher;
 import us.ihmc.ros2.ROS2Topic;
+import us.ihmc.sensors.ImageSensor;
+
+import java.nio.ByteBuffer;
+import java.nio.DoubleBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Autonomy process thread for managing visuomotor inference and supporting remote UI.
@@ -38,20 +52,12 @@ import us.ihmc.ros2.ROS2Topic;
  */
 public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
 {
-   private static final ROS2Topic<?> VISUOMOTOR = new ROS2Topic<>().withPrefix("lerobot");
-   /** 0: stop, 1: pause, 2: run */
-   private static final ROS2Topic<std_msgs.msg.dds.Int32> COMMAND = VISUOMOTOR.withSuffix("command").withType(std_msgs.msg.dds.Int32.class);
-   private static final ROS2Topic<std_msgs.msg.dds.String> STATUS = VISUOMOTOR.withSuffix("status").withType(std_msgs.msg.dds.String.class);
-   private static final ROS2Topic<Float32MultiArray> STATE = VISUOMOTOR.withSuffix("state").withType(Float32MultiArray.class);
-   private static final ROS2Topic<Float32MultiArray> ACTION = VISUOMOTOR.withSuffix("action").withType(Float32MultiArray.class);
-
    public static final ROS2IOTopicPair<VisuomotorOperationMessage> OPERATOR_UI
          = new ROS2IOTopicPair<>(new ROS2Topic<>().withPrefix("lerobot_ui").withTypeName(VisuomotorOperationMessage.class));
 
    private final ROS2SyncedRobotModel syncedRobot;
-   private final std_msgs.msg.dds.Int32 command = new std_msgs.msg.dds.Int32();
-   private String status = "Python not started";
-   private final Float32MultiArray stateMessage = new Float32MultiArray();
+   private final ImageSensor zedSensor;
+   private String status = "Not connected to openpi";
    private final FrequencyCalculator statusFrequency = new FrequencyCalculator();
    private final FramePose3D framePose = new FramePose3D();
    private final SideDependentList<Pose3D> stateHandPoses = new SideDependentList<>(new Pose3D(), new Pose3D());
@@ -60,9 +66,12 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
    private final SideDependentList<Pose3D> actionForearmPoses = new SideDependentList<>(new Pose3D(), new Pose3D());
    private long actionTimestampNanos = 0L;
    private long numberOfActionsReceived = 0L;
-   private final ROS2Publisher<Int32> commandPublisher;
-   private final ROS2Publisher<Float32MultiArray> statePublisher;
-   private final TypedNotification<Float32MultiArray> actionSubscription;
+   private long numberOfActionsTaken = 0L;
+   private final OpenpiClient openpiClient = new OpenpiClient("10.6.192.65");
+   private CompletableFuture<byte[]> openpiRequest;
+   private final Deque<DoubleBuffer> actionPlan = new ArrayDeque<>();
+   private final Throttler actionThrottler = new Throttler().setFrequency(5.0);
+   private final int planSize = 5;
 
    private final ROS2Node ros2Node = new ROS2NodeBuilder().build("visuomotor_update_thread");
    private final LatestTimestampModifiable latestTimestampModifiable;
@@ -75,25 +84,20 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
    private final ROS2Publisher<KinematicsStreamingToolboxInputMessage> kstInputPublisher;
    private final ROS2Publisher<ToolboxStateMessage> kstStatePublisher;
 
-   public VisuomotorPolicyUpdateThread(ROS2PeerClockOffsetEstimator clockOffsetEstimator, DRCRobotModel robotModel, ROS2SyncedRobotModel syncedRobot)
+   public VisuomotorPolicyUpdateThread(ROS2PeerClockOffsetEstimator clockOffsetEstimator,
+                                       DRCRobotModel robotModel,
+                                       ROS2SyncedRobotModel syncedRobot,
+                                       ImageSensor zedSensor)
    {
       super(VisuomotorPolicyUpdateThread.class.getSimpleName());
 
       this.syncedRobot = syncedRobot;
+      this.zedSensor = zedSensor;
 
-      setFrequencyLimit(120.0);
+      setFrequencyLimit(30.0);
 
       actionHandPoses.forEach(Pose3D::setToNaN);
       actionForearmPoses.forEach(Pose3D::setToNaN);
-
-      commandPublisher = ros2Node.createPublisher(COMMAND);
-      statePublisher = ros2Node.createPublisher(STATE);
-      ros2Node.createSubscription2(STATUS, message ->
-      {
-         status = message.getDataAsString();
-         statusFrequency.ping();
-      });
-      actionSubscription = ROS2Tools.createNotificationSubscription(ros2Node, ACTION);
 
       latestTimestampModifiable = new LatestTimestampModifiable(new CRDTInfo(ROS2ActorDesignation.ROBOT, clockOffsetEstimator));
       latestTimestampModifiable.modify(); // On startup, we want the initial state to propagate
@@ -125,92 +129,175 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
          controlRobot.fromMessage(uiCommand.getControlRobot());
       }
 
-      IDLSequence.Float messageData = stateMessage.getData();
-      messageData.resetQuick();
-      synchronized (syncedRobot)
+      if (running.getValue())
       {
-         for (RobotSide side : RobotSide.values)
+         if (openpiRequest == null)
          {
-            Pose3D stateHandPose = stateHandPoses.get(side);
-            framePose.setToZero(syncedRobot.getFullRobotModel().getHand(side).getParentJoint().getFrameAfterJoint());
-            framePose.changeFrame(syncedRobot.getReferenceFrames().getPelvisFrame());
-            stateHandPose.set(framePose);
-            messageData.add(stateHandPose.getPosition().getX32());
-            messageData.add(stateHandPose.getPosition().getY32());
-            messageData.add(stateHandPose.getPosition().getZ32());
-            messageData.add(stateHandPose.getOrientation().getX32());
-            messageData.add(stateHandPose.getOrientation().getY32());
-            messageData.add(stateHandPose.getOrientation().getZ32());
-            messageData.add(stateHandPose.getOrientation().getS32());
-            Pose3D stateForearmPose = stateForearmPoses.get(side);
-            framePose.setToZero(syncedRobot.getFullRobotModel().getForearm(side).getParentJoint().getFrameAfterJoint());
-            framePose.changeFrame(syncedRobot.getReferenceFrames().getPelvisFrame());
-            stateForearmPose.set(framePose);
-            messageData.add(stateForearmPose.getPosition().getX32());
-            messageData.add(stateForearmPose.getPosition().getY32());
-            messageData.add(stateForearmPose.getPosition().getZ32());
-            messageData.add(stateForearmPose.getOrientation().getX32());
-            messageData.add(stateForearmPose.getOrientation().getY32());
-            messageData.add(stateForearmPose.getOrientation().getZ32());
-            messageData.add(stateForearmPose.getOrientation().getS32());
-         }
-      }
-      statePublisher.publish(stateMessage);
-
-      command.setData(running.getValue() ? 2 : 1);
-      commandPublisher.publish(command);
-
-      if (actionSubscription.poll())
-      {
-         actionTimestampNanos = System.nanoTime(); // TODO: Get this from the diffusion policy on the python side?
-         ++numberOfActionsReceived;
-
-         synchronized (syncedRobot)
-         {
-            IDLSequence.Float data = actionSubscription.read().getData();
-            int i = 0;
-            for (RobotSide side : RobotSide.values)
+            if (actionPlan.isEmpty())
             {
-               framePose.setToZero(syncedRobot.getReferenceFrames().getPelvisFrame());
-               framePose.getPosition().set(data.get(i++), data.get(i++), data.get(i++));
-               framePose.getOrientation().set(data.get(i++), data.get(i++), data.get(i++), data.get(i++));
-               framePose.changeFrame(ReferenceFrame.getWorldFrame());
-               actionHandPoses.get(side).set(framePose);
-               framePose.setToZero(syncedRobot.getReferenceFrames().getPelvisFrame());
-               framePose.getPosition().set(data.get(i++), data.get(i++), data.get(i++));
-               framePose.getOrientation().set(data.get(i++), data.get(i++), data.get(i++), data.get(i++));
-               framePose.changeFrame(ReferenceFrame.getWorldFrame());
-               actionForearmPoses.get(side).set(framePose);
+               boolean requestValid = true;
+
+               ByteBuffer state = openpiClient.getState();
+               state.clear();
+               synchronized (syncedRobot)
+               {
+                  requestValid &= syncedRobot.getDataReceptionTimerSnapshot().isRunning(0.02);
+                  if (requestValid)
+                  {
+                     for (RobotSide side : RobotSide.values)
+                     {
+                        Pose3D stateHandPose = stateHandPoses.get(side);
+                        framePose.setToZero(syncedRobot.getFullRobotModel().getHand(side).getParentJoint().getFrameAfterJoint());
+                        framePose.changeFrame(syncedRobot.getReferenceFrames().getPelvisFrame());
+                        stateHandPose.set(framePose);
+                        state.putFloat(stateHandPose.getPosition().getX32());
+                        state.putFloat(stateHandPose.getPosition().getY32());
+                        state.putFloat(stateHandPose.getPosition().getZ32());
+                        state.putFloat(stateHandPose.getOrientation().getX32());
+                        state.putFloat(stateHandPose.getOrientation().getY32());
+                        state.putFloat(stateHandPose.getOrientation().getZ32());
+                        state.putFloat(stateHandPose.getOrientation().getS32());
+                        Pose3D stateForearmPose = stateForearmPoses.get(side);
+                        framePose.setToZero(syncedRobot.getFullRobotModel().getForearm(side).getParentJoint().getFrameAfterJoint());
+                        framePose.changeFrame(syncedRobot.getReferenceFrames().getPelvisFrame());
+                        stateForearmPose.set(framePose);
+                        state.putFloat(stateForearmPose.getPosition().getX32());
+                        state.putFloat(stateForearmPose.getPosition().getY32());
+                        state.putFloat(stateForearmPose.getPosition().getZ32());
+                        state.putFloat(stateForearmPose.getOrientation().getX32());
+                        state.putFloat(stateForearmPose.getOrientation().getY32());
+                        state.putFloat(stateForearmPose.getOrientation().getZ32());
+                        state.putFloat(stateForearmPose.getOrientation().getS32());
+                     }
+                  }
+               }
+
+               for (RobotSide side : RobotSide.values)
+               {
+                  RawImage image = zedSensor.getImage(zedSensor.getImageKeys()[side.ordinal()]);
+
+                  requestValid &= image != null;
+                  if (requestValid)
+                  {
+                     Mat rgbColor = new Mat();
+                     image.getPixelFormat().convertToPixelFormat(image.getCpuImageMat(), rgbColor, PixelFormat.RGB8);
+                     image.release();
+
+                     Size cropSize = new Size(224, 224); // Square frame for siglip
+                     int scaleWidth = image.getWidth() * cropSize.height() / image.getHeight(); // Account for aspect ratio
+                     Size scaleDownSize = new Size(scaleWidth, cropSize.height());
+                     Mat resized = new Mat(scaleDownSize, opencv_core.CV_8UC3);
+                     opencv_imgproc.resize(rgbColor, resized, scaleDownSize);
+                     scaleDownSize.close();
+                     rgbColor.release();
+
+                     Point cropOffset = new Point((resized.cols() - cropSize.width()) / 2, 0); // Center crop horizontally
+                     Rect roi = new Rect(cropOffset, cropSize);
+                     Mat cropped = new Mat(resized, roi);
+                     resized.close();
+                     cropSize.close();
+                     cropOffset.close();
+                     roi.close();
+
+                     cropped.data().get(openpiClient.getImages().get(side).array());
+                     cropped.close();
+                  }
+               }
+
+               if (requestValid)
+               {
+                  openpiRequest = openpiClient.request();
+                  if (openpiRequest == null)
+                     status = "Could not connect to server at ws://" + openpiClient.getHost() + ":" + openpiClient.getPort();
+                  else
+                     status = "Requested inference...";
+               }
+               else
+               {
+                  status = "Waiting for robot data...";
+               }
             }
          }
-
-         KinematicsStreamingToolboxInputMessage ikInputMessage = new KinematicsStreamingToolboxInputMessage();
-         ikInputMessage.setStreamToController(controlRobot.getValue());
-         ikInputMessage.setTimestamp(actionTimestampNanos);
-         for (RobotSide side : RobotSide.values)
+         else if (openpiRequest.isDone())
          {
-            KinematicsToolboxRigidBodyMessage rigidBodyMessage = new KinematicsToolboxRigidBodyMessage();
-            rigidBodyMessage.setEndEffectorHashCode(syncedRobot.getFullRobotModel().getHand(side).hashCode());
-            rigidBodyMessage.getDesiredPositionInWorld().set(actionHandPoses.get(side).getTranslation());
-            rigidBodyMessage.getDesiredOrientationInWorld().set(actionHandPoses.get(side).getRotation());
-            rigidBodyMessage.getAngularWeightMatrix().setXWeight(0.02);
-            rigidBodyMessage.getAngularWeightMatrix().setYWeight(0.02);
-            rigidBodyMessage.getAngularWeightMatrix().setZWeight(0.02);
-            ikInputMessage.getInputs().add().set(rigidBodyMessage);
+            if (!openpiRequest.isCompletedExceptionally())
+            {
+               openpiClient.unpack(openpiRequest);
 
-            rigidBodyMessage = new KinematicsToolboxRigidBodyMessage();
-            rigidBodyMessage.setEndEffectorHashCode(syncedRobot.getFullRobotModel().getForearm(side).hashCode());
-            rigidBodyMessage.getDesiredPositionInWorld().set(actionForearmPoses.get(side).getTranslation());
-            rigidBodyMessage.getLinearSelectionMatrix().setXSelected(false); // Disable position tracking for forearm
-            rigidBodyMessage.getLinearSelectionMatrix().setYSelected(false);
-            rigidBodyMessage.getLinearSelectionMatrix().setZSelected(false);
-            rigidBodyMessage.getDesiredOrientationInWorld().set(actionForearmPoses.get(side).getRotation());
-            rigidBodyMessage.getAngularWeightMatrix().setXWeight(0.01);
-            rigidBodyMessage.getAngularWeightMatrix().setYWeight(0.01);
-            rigidBodyMessage.getAngularWeightMatrix().setZWeight(0.001);
-            ikInputMessage.getInputs().add().set(rigidBodyMessage);
+               DoubleBuffer actionChunk = openpiClient.getActionChunk().asDoubleBuffer();
+               for (int i = 0; i < planSize; i++)
+               {
+                  DoubleBuffer action = DoubleBuffer.allocate(28);
+                  action.put(0, actionChunk, i * 28, 28);
+                  actionPlan.addLast(action);
+               }
+               numberOfActionsReceived += actionPlan.size();
+            }
+
+            openpiRequest = null;
          }
-         kstInputPublisher.publish(ikInputMessage);
+
+         if (actionThrottler.run())
+         {
+            DoubleBuffer action = actionPlan.pollFirst();
+            if (action != null)
+            {
+               actionTimestampNanos = System.nanoTime(); // TODO: Get this from the policy on the python side?
+               ++numberOfActionsTaken;
+               status = "Taking action %d".formatted(numberOfActionsTaken);
+
+               synchronized (syncedRobot)
+               {
+                  int i = 0;
+                  for (RobotSide side : RobotSide.values)
+                  {
+                     framePose.setToZero(syncedRobot.getReferenceFrames().getPelvisFrame());
+                     framePose.getPosition().set(action.get(i++), action.get(i++), action.get(i++));
+                     framePose.getOrientation().set(action.get(i++), action.get(i++), action.get(i++), action.get(i++));
+                     framePose.changeFrame(ReferenceFrame.getWorldFrame());
+                     actionHandPoses.get(side).set(framePose);
+                     framePose.setToZero(syncedRobot.getReferenceFrames().getPelvisFrame());
+                     framePose.getPosition().set(action.get(i++), action.get(i++), action.get(i++));
+                     framePose.getOrientation().set(action.get(i++), action.get(i++), action.get(i++), action.get(i++));
+                     framePose.changeFrame(ReferenceFrame.getWorldFrame());
+                     actionForearmPoses.get(side).set(framePose);
+                  }
+               }
+
+               KinematicsStreamingToolboxInputMessage ikInputMessage = new KinematicsStreamingToolboxInputMessage();
+               ikInputMessage.setStreamToController(controlRobot.getValue());
+               ikInputMessage.setTimestamp(actionTimestampNanos);
+               for (RobotSide side : RobotSide.values)
+               {
+                  KinematicsToolboxRigidBodyMessage rigidBodyMessage = new KinematicsToolboxRigidBodyMessage();
+                  rigidBodyMessage.setEndEffectorHashCode(syncedRobot.getFullRobotModel().getHand(side).hashCode());
+                  rigidBodyMessage.getDesiredPositionInWorld().set(actionHandPoses.get(side).getTranslation());
+                  rigidBodyMessage.getDesiredOrientationInWorld().set(actionHandPoses.get(side).getRotation());
+                  rigidBodyMessage.getAngularWeightMatrix().setXWeight(0.02);
+                  rigidBodyMessage.getAngularWeightMatrix().setYWeight(0.02);
+                  rigidBodyMessage.getAngularWeightMatrix().setZWeight(0.02);
+                  ikInputMessage.getInputs().add().set(rigidBodyMessage);
+
+                  rigidBodyMessage = new KinematicsToolboxRigidBodyMessage();
+                  rigidBodyMessage.setEndEffectorHashCode(syncedRobot.getFullRobotModel().getForearm(side).hashCode());
+                  rigidBodyMessage.getDesiredPositionInWorld().set(actionForearmPoses.get(side).getTranslation());
+                  rigidBodyMessage.getLinearSelectionMatrix().setXSelected(false); // Disable position tracking for forearm
+                  rigidBodyMessage.getLinearSelectionMatrix().setYSelected(false);
+                  rigidBodyMessage.getLinearSelectionMatrix().setZSelected(false);
+                  rigidBodyMessage.getDesiredOrientationInWorld().set(actionForearmPoses.get(side).getRotation());
+                  rigidBodyMessage.getAngularWeightMatrix().setXWeight(0.01);
+                  rigidBodyMessage.getAngularWeightMatrix().setYWeight(0.01);
+                  rigidBodyMessage.getAngularWeightMatrix().setZWeight(0.001);
+                  ikInputMessage.getInputs().add().set(rigidBodyMessage);
+               }
+               kstInputPublisher.publish(ikInputMessage);
+            }
+         }
+      }
+      else
+      {
+         actionPlan.clear();
+         status = "Not running";
       }
 
       VisuomotorOperationMessage uiStatus = new VisuomotorOperationMessage();
