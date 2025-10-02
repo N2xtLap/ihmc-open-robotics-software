@@ -64,17 +64,26 @@ public class KinematicsStreamingToolboxModule extends ToolboxModule
    {
       this(robotModel, parameters, startYoVariableServer, null);
    }
+   public KinematicsStreamingToolboxModule(DRCRobotModel robotModel,
+                                           KinematicsStreamingToolboxParameters parameters,
+                                           boolean startYoVariableServer,
+                                           YoRegistry childRegistry)
+   {
+      this(robotModel, parameters, startYoVariableServer, childRegistry, null);
+   }
 
    public KinematicsStreamingToolboxModule(DRCRobotModel robotModel,
                                            KinematicsStreamingToolboxParameters parameters,
                                            boolean startYoVariableServer,
-                                           YoRegistry childRegistry) // optional child registry to share the server
+                                           YoRegistry childRegistry,
+                                           ROS2Node ros2Node) // optional child registry to share the server
    {
       super(robotModel.getSimpleRobotName(),
             robotModel.createFullRobotModel(),
             robotModel.getLogModelProvider(),
             startYoVariableServer,
-            (int) (parameters.getToolboxUpdatePeriod() * 1000));
+            (int) (parameters.getToolboxUpdatePeriod() * 1000),
+            ros2Node);
 
       setTimeWithoutInputsBeforeGoingToSleep(parameters.getTimeThresholdForSleeping());
       controller = new KinematicsStreamingToolboxController(commandInputManager,
