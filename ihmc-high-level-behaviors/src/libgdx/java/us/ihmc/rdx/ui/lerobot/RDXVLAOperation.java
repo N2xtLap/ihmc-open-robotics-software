@@ -1,6 +1,6 @@
 package us.ihmc.rdx.ui.lerobot;
 
-import behavior_msgs.msg.dds.VisuomotorOperationMessage;
+import behavior_msgs.msg.dds.VLAOperationMessage;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g3d.Renderable;
 import com.badlogic.gdx.utils.Array;
@@ -14,7 +14,7 @@ import us.ihmc.communication.crdt.CRDTInfo;
 import us.ihmc.communication.crdt.LatestTimestampModifiable;
 import us.ihmc.communication.ros2.ROS2ActorDesignation;
 import us.ihmc.communication.ros2.sync.ROS2PeerClockOffsetEstimator;
-import us.ihmc.lerobot.VisuomotorPolicyUpdateThread;
+import us.ihmc.lerobot.VLAUpdateThread;
 import us.ihmc.rdx.imgui.ImGuiAveragedFrequencyText;
 import us.ihmc.rdx.imgui.ImGuiTools;
 import us.ihmc.rdx.imgui.ImGuiUniqueLabelMap;
@@ -25,35 +25,33 @@ import us.ihmc.robotics.robotSide.SideDependentList;
 import us.ihmc.ros2.ROS2Node;
 import us.ihmc.ros2.ROS2Publisher;
 
-import static us.ihmc.lerobot.VisuomotorPolicyUpdateThread.OPERATOR_UI;
+import static us.ihmc.lerobot.VLAUpdateThread.UI;
 
 /**
- * UI for remotely operating {@link VisuomotorPolicyUpdateThread}.
+ * UI for remotely operating {@link VLAUpdateThread}.
  */
-public class RDXVisuomotorOperation
+public class RDXVLAOperation
 {
    private final ImGuiUniqueLabelMap labels = new ImGuiUniqueLabelMap(getClass());
    private final Throttler commandThrottler = new Throttler().setFrequency(30.0);
    private final LatestTimestampModifiable latestTimestampModifiable;
    private final CRDTBidirectionalBoolean running;
    private final CRDTBidirectionalBoolean controlRobot;
-   private double pythonStatusFrequency = 0.0;
-   private long receivedActions = 0L;
    private String statusMessage = "Not yet connected to robot";
-   private final TypedNotification<VisuomotorOperationMessage> statusSubscription;
-   private final ROS2Publisher<VisuomotorOperationMessage> commandPublisher;
+   private final TypedNotification<VLAOperationMessage> statusSubscription;
+   private final ROS2Publisher<VLAOperationMessage> commandPublisher;
    private final ImGuiAveragedFrequencyText commsFrequencyText = new ImGuiAveragedFrequencyText();
    private final SideDependentList<RDXReferenceFrameGraphic> actionHandPoseGraphics = new SideDependentList<>();
    private final SideDependentList<RDXReferenceFrameGraphic> actionForearmPoseGraphics = new SideDependentList<>();
 
-   public RDXVisuomotorOperation(ROS2Node ros2Node, ROS2PeerClockOffsetEstimator peerClockEstimator)
+   public RDXVLAOperation(ROS2Node ros2Node, ROS2PeerClockOffsetEstimator peerClockEstimator)
    {
       latestTimestampModifiable = new LatestTimestampModifiable(new CRDTInfo(ROS2ActorDesignation.OPERATOR, peerClockEstimator));
       running = new CRDTBidirectionalBoolean(latestTimestampModifiable, false);
       controlRobot = new CRDTBidirectionalBoolean(latestTimestampModifiable, false);
 
-      statusSubscription = ROS2Tools.createNotificationSubscription(ros2Node, OPERATOR_UI.getTopic(ROS2ActorDesignation.OPERATOR.getIncomingQualifier()));
-      commandPublisher = ros2Node.createPublisher(OPERATOR_UI.getTopic(ROS2ActorDesignation.OPERATOR.getOutgoingQualifier()));
+      statusSubscription = ROS2Tools.createNotificationSubscription(ros2Node, UI.getTopic(ROS2ActorDesignation.OPERATOR.getIncomingQualifier()));
+      commandPublisher = ros2Node.createPublisher(UI.getTopic(ROS2ActorDesignation.OPERATOR.getOutgoingQualifier()));
    }
 
    public void create(RDXBaseUI baseUI)
@@ -65,7 +63,7 @@ public class RDXVisuomotorOperation
       }
 
       baseUI.getPrimaryScene().addRenderableProvider(this::getRenderables);
-      baseUI.getImGuiPanelManager().addPanel("Visuomotor Inference", this::renderImGuiWidgets);
+      baseUI.getImGuiPanelManager().addPanel("VLA Operation", this::renderImGuiWidgets);
    }
 
    public void update()
@@ -78,7 +76,7 @@ public class RDXVisuomotorOperation
       if (statusSubscription.poll())
       {
          commsFrequencyText.ping();
-         VisuomotorOperationMessage status = statusSubscription.read();
+         VLAOperationMessage status = statusSubscription.read();
          latestTimestampModifiable.fromMessage(status.getLatestTimestampModifiable());
          running.fromMessage(status.getRunning());
          controlRobot.fromMessage(status.getControlRobot());
@@ -87,13 +85,11 @@ public class RDXVisuomotorOperation
             actionHandPoseGraphics.get(side).setPoseInWorldFrame(status.getActionHandPoses()[side.ordinal()]);
             actionForearmPoseGraphics.get(side).setPoseInWorldFrame(status.getActionForearmPoses()[side.ordinal()]);
          }
-         pythonStatusFrequency = status.getPythonStatusFrequency();
-         statusMessage = status.getPythonStatusMessageAsString();
-         receivedActions = status.getReceivedActions();
+         statusMessage = status.getStatusMessageAsString();
       }
 
-      ImGui.text("Update Thread: %s   Python: %3d Hz   Actions: %d".formatted(commsFrequencyText.getText(), (int) pythonStatusFrequency, receivedActions));
-      ImGui.text("Python status: " + statusMessage);
+      ImGui.text("Update Thread: %s".formatted(commsFrequencyText.getText()));
+      ImGui.text("Python status: %s".formatted(statusMessage));
       if (ImGui.checkbox(labels.get("Run inference"), running.getValue()))
          running.setValue(!running.getValue());
       ImGui.beginDisabled(running.getValue());
@@ -114,7 +110,7 @@ public class RDXVisuomotorOperation
 
       if (commandThrottler.run())
       {
-         VisuomotorOperationMessage command = new VisuomotorOperationMessage();
+         VLAOperationMessage command = new VLAOperationMessage();
          latestTimestampModifiable.toMessage(command.getLatestTimestampModifiable());
          command.setRunning(running.toMessage());
          command.setControlRobot(controlRobot.toMessage());

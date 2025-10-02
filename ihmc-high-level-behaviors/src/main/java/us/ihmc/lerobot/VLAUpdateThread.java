@@ -1,6 +1,6 @@
 package us.ihmc.lerobot;
 
-import behavior_msgs.msg.dds.VisuomotorOperationMessage;
+import behavior_msgs.msg.dds.VLAOperationMessage;
 import org.bytedeco.opencv.global.opencv_core;
 import org.bytedeco.opencv.global.opencv_imgproc;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -34,7 +34,6 @@ import us.ihmc.perception.imageMessage.PixelFormat;
 import us.ihmc.robotics.robotSide.RobotSide;
 import us.ihmc.robotics.robotSide.SideDependentList;
 import us.ihmc.ros2.ROS2Node;
-import us.ihmc.ros2.ROS2NodeBuilder;
 import us.ihmc.ros2.ROS2Publisher;
 import us.ihmc.ros2.ROS2Topic;
 import us.ihmc.sensors.ImageSensor;
@@ -46,15 +45,13 @@ import java.util.Deque;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Autonomy process thread for managing visuomotor inference and supporting remote UI.
- * Manages communication with the Python side, which is running the LeRobot code
- * with pytorch inference of the visuomotor policy. We use a ROS 2 API to interface with it.
+ * Autonomy process thread for managing vision-language-action (VLA) inference and supporting remote UI.
+ * Manages communication with the Python side, which is running the openpi.
  */
-public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
+public class VLAUpdateThread extends RepeatingTaskThread
 {
-   public static final ROS2IOTopicPair<VisuomotorOperationMessage> OPERATOR_UI
-         = new ROS2IOTopicPair<>(new ROS2Topic<>().withPrefix("lerobot_ui").withTypeName(VisuomotorOperationMessage.class));
-
+   public static final ROS2IOTopicPair<VLAOperationMessage> UI = new ROS2IOTopicPair<>(new ROS2Topic<>().withPrefix("vla_ui")
+                                                                                                        .withTypeName(VLAOperationMessage.class));
    private final ROS2SyncedRobotModel syncedRobot;
    private final ImageSensor zedSensor;
    private String status = "Not connected to openpi";
@@ -73,23 +70,23 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
    private final Throttler actionThrottler = new Throttler().setFrequency(5.0);
    private final int planSize = 5;
 
-   private final ROS2Node ros2Node = new ROS2NodeBuilder().build("visuomotor_update_thread");
    private final LatestTimestampModifiable latestTimestampModifiable;
    private long sequenceID = 0L;
    private final CRDTBidirectionalBoolean running;
    private final CRDTBidirectionalBoolean controlRobot;
-   private final TypedNotification<VisuomotorOperationMessage> uiCommandSubscription;
-   private final ROS2Publisher<VisuomotorOperationMessage> uiStatusPublisher;
+   private final TypedNotification<VLAOperationMessage> uiCommandSubscription;
+   private final ROS2Publisher<VLAOperationMessage> uiStatusPublisher;
 
    private final ROS2Publisher<KinematicsStreamingToolboxInputMessage> kstInputPublisher;
    private final ROS2Publisher<ToolboxStateMessage> kstStatePublisher;
 
-   public VisuomotorPolicyUpdateThread(ROS2PeerClockOffsetEstimator clockOffsetEstimator,
-                                       DRCRobotModel robotModel,
-                                       ROS2SyncedRobotModel syncedRobot,
-                                       ImageSensor zedSensor)
+   public VLAUpdateThread(ROS2Node ros2Node,
+                          ROS2PeerClockOffsetEstimator clockOffsetEstimator,
+                          DRCRobotModel robotModel,
+                          ROS2SyncedRobotModel syncedRobot,
+                          ImageSensor zedSensor)
    {
-      super(VisuomotorPolicyUpdateThread.class.getSimpleName());
+      super(VLAUpdateThread.class.getSimpleName());
 
       this.syncedRobot = syncedRobot;
       this.zedSensor = zedSensor;
@@ -104,8 +101,8 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
       running = new CRDTBidirectionalBoolean(latestTimestampModifiable, false);
       controlRobot = new CRDTBidirectionalBoolean(latestTimestampModifiable, false);
 
-      uiCommandSubscription = ROS2Tools.createNotificationSubscription(ros2Node, OPERATOR_UI.getTopic(ROS2ActorDesignation.ROBOT.getIncomingQualifier()));
-      uiStatusPublisher = ros2Node.createPublisher(OPERATOR_UI.getTopic(ROS2ActorDesignation.ROBOT.getOutgoingQualifier()));
+      uiCommandSubscription = ROS2Tools.createNotificationSubscription(ros2Node, UI.getTopic(ROS2ActorDesignation.ROBOT.getIncomingQualifier()));
+      uiStatusPublisher = ros2Node.createPublisher(UI.getTopic(ROS2ActorDesignation.ROBOT.getOutgoingQualifier()));
 
       kstInputPublisher = ros2Node.createPublisher(ToolboxAPIs.getIKStreamingInputTopic(robotModel.getSimpleRobotName()));
       kstStatePublisher = ros2Node.createPublisher(ToolboxAPIs.getIKStreamingStateTopic(robotModel.getSimpleRobotName()));
@@ -116,7 +113,7 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
    {
       if (uiCommandSubscription.poll())
       {
-         VisuomotorOperationMessage uiCommand = uiCommandSubscription.read();
+         VLAOperationMessage uiCommand = uiCommandSubscription.read();
          latestTimestampModifiable.fromMessage(uiCommand.getLatestTimestampModifiable());
          boolean wasRunning = running.getValue();
          running.fromMessage(uiCommand.getRunning());
@@ -300,7 +297,7 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
          status = "Not running";
       }
 
-      VisuomotorOperationMessage uiStatus = new VisuomotorOperationMessage();
+      VLAOperationMessage uiStatus = new VLAOperationMessage();
       latestTimestampModifiable.toMessage(uiStatus.getLatestTimestampModifiable());
       uiStatus.setSequenceId(sequenceID++);
       uiStatus.setRunning(running.toMessage());
@@ -310,15 +307,12 @@ public class VisuomotorPolicyUpdateThread extends RepeatingTaskThread
          uiStatus.getActionHandPoses()[side.ordinal()].set(actionHandPoses.get(side));
          uiStatus.getActionForearmPoses()[side.ordinal()].set(actionForearmPoses.get(side));
       }
-      uiStatus.setPythonStatusFrequency(statusFrequency.getFrequencyDecaying());
-      uiStatus.setPythonStatusMessage(status);
-      uiStatus.setReceivedActions(numberOfActionsReceived);
+      uiStatus.setStatusMessage("%-30s Actions: %d".formatted(status, numberOfActionsReceived));
       uiStatusPublisher.publish(uiStatus);
    }
 
    public void destroy()
    {
       blockingKill();
-      ros2Node.destroy();
    }
 }
