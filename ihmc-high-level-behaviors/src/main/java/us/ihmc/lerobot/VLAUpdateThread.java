@@ -12,6 +12,9 @@ import toolbox_msgs.msg.dds.KinematicsToolboxRigidBodyMessage;
 import toolbox_msgs.msg.dds.ToolboxStateMessage;
 import us.ihmc.avatar.drcRobot.DRCRobotModel;
 import us.ihmc.avatar.drcRobot.ROS2SyncedRobotModel;
+import us.ihmc.commons.exception.DefaultExceptionHandler;
+import us.ihmc.commons.exception.ExceptionTools;
+import us.ihmc.commons.thread.Notification;
 import us.ihmc.commons.thread.RepeatingTaskThread;
 import us.ihmc.commons.thread.Throttler;
 import us.ihmc.commons.thread.TypedNotification;
@@ -66,9 +69,11 @@ public class VLAUpdateThread extends RepeatingTaskThread
    private long numberOfActionsTaken = 0L;
    private final OpenpiClient openpiClient = new OpenpiClient("10.6.192.65");
    private CompletableFuture<byte[]> openpiRequest;
+   private final Notification requested = new Notification();
    private final Deque<DoubleBuffer> actionPlan = new ArrayDeque<>();
    private final Throttler actionThrottler = new Throttler().setFrequency(5.0);
    private final int planSize = 5;
+   private final SideDependentList<Mat> images = new SideDependentList<>(new Mat(224, 224, opencv_core.CV_8UC3), new Mat(224, 224, opencv_core.CV_8UC3));
 
    private final LatestTimestampModifiable latestTimestampModifiable;
    private long sequenceID = 0L;
@@ -109,7 +114,7 @@ public class VLAUpdateThread extends RepeatingTaskThread
    }
 
    @Override
-   protected void runTask()
+   public void runTask()
    {
       if (uiCommandSubscription.poll())
       {
@@ -191,6 +196,7 @@ public class VLAUpdateThread extends RepeatingTaskThread
                      Point cropOffset = new Point((resized.cols() - cropSize.width()) / 2, 0); // Center crop horizontally
                      Rect roi = new Rect(cropOffset, cropSize);
                      Mat cropped = new Mat(resized, roi);
+                     cropped.copyTo(images.get(side));
                      resized.close();
                      cropSize.close();
                      cropOffset.close();
@@ -207,7 +213,10 @@ public class VLAUpdateThread extends RepeatingTaskThread
                   if (openpiRequest == null)
                      status = "Could not connect to server at ws://" + openpiClient.getHost() + ":" + openpiClient.getPort();
                   else
+                  {
+                     requested.set();
                      status = "Requested inference...";
+                  }
                }
                else
                {
@@ -314,5 +323,15 @@ public class VLAUpdateThread extends RepeatingTaskThread
    public void destroy()
    {
       blockingKill();
+   }
+
+   public Notification getRequested()
+   {
+      return requested;
+   }
+
+   public SideDependentList<Mat> getImages()
+   {
+      return images;
    }
 }
