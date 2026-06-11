@@ -1,0 +1,54 @@
+package us.ihmc.alice5.parameters.controller;
+
+import us.ihmc.alice5.Alice5JointMap;
+import us.ihmc.commonWalkingControlModules.highLevelHumanoidControl.highLevelStates.WholeBodySetpointParameters;
+import us.ihmc.robotics.partNames.ArmJointName;
+import us.ihmc.robotics.partNames.LegJointName;
+import us.ihmc.robotics.partNames.NeckJointName;
+import us.ihmc.robotics.partNames.SpineJointName;
+import us.ihmc.robotics.robotSide.RobotSide;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * ALICE5 stand-prep pose: slight crouch within joint limits
+ * (hip_p range [-1.745, 0.349]: negative = leg forward; knee_p range [-0.1, 2.1]: positive = flexion;
+ * ankle_p range [-1.169, 0.489]: negative compensates knee flexion to keep the sole flat).
+ */
+public class Alice5StandPrepSetPoints implements WholeBodySetpointParameters
+{
+   private final Map<String, Double> setPoints = new LinkedHashMap<>();
+
+   public Alice5StandPrepSetPoints(Alice5JointMap jointMap)
+   {
+      setPoints.put(jointMap.getSpineJointName(SpineJointName.SPINE_YAW), 0.0);
+      setPoints.put(jointMap.getSpineJointName(SpineJointName.SPINE_PITCH), 0.0);
+      setPoints.put(jointMap.getSpineJointName(SpineJointName.SPINE_ROLL), 0.0);
+      setPoints.put(jointMap.getNeckJointName(NeckJointName.DISTAL_NECK_PITCH), 0.1);
+      setPoints.put(jointMap.getNeckJointName(NeckJointName.DISTAL_NECK_YAW), 0.0);
+
+      for (RobotSide robotSide : RobotSide.values)
+      {
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.HIP_YAW), 0.0);
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.HIP_ROLL), robotSide.negateIfRightSide(0.02));
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.HIP_PITCH), -0.35);
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.KNEE_PITCH), 0.7);
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.ANKLE_PITCH), -0.35);
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.ANKLE_ROLL), robotSide.negateIfRightSide(-0.02));
+
+         setPoints.put(jointMap.getArmJointName(robotSide, ArmJointName.SHOULDER_PITCH), 0.2);
+         setPoints.put(jointMap.getArmJointName(robotSide, ArmJointName.SHOULDER_ROLL), robotSide.negateIfRightSide(0.15));
+         setPoints.put(jointMap.getArmJointName(robotSide, ArmJointName.ELBOW_PITCH), -0.6);
+      }
+   }
+
+   @Override
+   public double getSetpoint(String jointName)
+   {
+      if (setPoints.containsKey(jointName))
+         return setPoints.get(jointName);
+      else
+         return 0.0;
+   }
+}
