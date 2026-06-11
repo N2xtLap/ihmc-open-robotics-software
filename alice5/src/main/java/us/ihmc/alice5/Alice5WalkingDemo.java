@@ -1,0 +1,296 @@
+package us.ihmc.alice5;
+
+import us.ihmc.avatar.drcRobot.RobotTarget;
+import us.ihmc.avatar.scs2.SCS2AvatarSimulation;
+import us.ihmc.avatar.scs2.SCS2AvatarSimulationFactory;
+import us.ihmc.euclid.tuple3D.Vector3D;
+import us.ihmc.mecano.multiBodySystem.interfaces.FloatingJointBasics;
+import us.ihmc.scs2.SimulationConstructionSet2;
+import us.ihmc.commonWalkingControlModules.desiredFootStep.footstepGenerator.HeadingAndVelocityEvaluationScriptParameters;
+import us.ihmc.simulationConstructionSetTools.util.environments.FlatGroundEnvironment;
+import us.ihmc.simulationToolkit.controllers.PushRobotControllerSCS2;
+import us.ihmc.wholeBodyController.RobotContactPointParameters.GroundContactModelParameters;
+import us.ihmc.yoVariables.registry.YoRegistry;
+import us.ihmc.yoVariables.variable.YoBoolean;
+import us.ihmc.yoVariables.variable.YoDouble;
+import us.ihmc.yoVariables.variable.YoVariable;
+
+import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+
+/**
+ * M2 gate demo: headless SCS2 flat-ground WALKING via ContinuousStepGenerator.
+ *
+ * Scenario: settle (5 s) -> walkCSG=true with commanded forward velocity -> walk until duration
+ * (optional push at alice5.push.time). Metrics: steps (state-transition listener), distance/speed
+ * (sim ground truth), controller tick compute p50/p99 (controllerThreadTimerCurrent listener).
+ */
+public class Alice5WalkingDemo
+{
+   public static void main(String[] args)
+   {
+      double duration = Double.parseDouble(System.getProperty("alice5.duration", "60.0"));
+      double settleTime = Double.parseDouble(System.getProperty("alice5.settle", "5.0"));
+      double velocity = Double.parseDouble(System.getProperty("alice5.vel", "0.125"));
+      double swingTime = Double.parseDouble(System.getProperty("alice5.swing", "0.8"));
+      double transferTime = Double.parseDouble(System.getProperty("alice5.transfer", "0.4"));
+      double maxStepLength = Double.parseDouble(System.getProperty("alice5.maxStepLength", "0.35"));
+      int minSteps = Integer.parseInt(System.getProperty("alice5.minSteps", "20"));
+      double minSpeed = Double.parseDouble(System.getProperty("alice5.minSpeed", "0.0"));
+      double pushTime = Double.parseDouble(System.getProperty("alice5.push.time", "-1"));
+      double pushForce = Double.parseDouble(System.getProperty("alice5.push.force", "50"));
+      double pushDuration = Double.parseDouble(System.getProperty("alice5.push.duration", "0.1"));
+      String csvPath = System.getProperty("alice5.metrics.csv", "alice5_m2_metrics.csv");
+      boolean createYoVariableServer = Boolean.parseBoolean(System.getProperty("create.yovariable.server", "false"));
+
+      Alice5RobotModel robotModel = new Alice5RobotModel(Alice5Version.V1_FULL_ROBOT, RobotTarget.SCS);
+      FlatGroundEnvironment environment = new FlatGroundEnvironment();
+
+      SCS2AvatarSimulationFactory factory = new SCS2AvatarSimulationFactory();
+      factory.setRobotModel(robotModel);
+      factory.setCommonAvatarEnvrionmentInterface(environment);
+      factory.setCreateYoVariableServer(createYoVariableServer);
+      factory.setInitializeEstimatorToActual(true);
+      factory.setUseImpulseBasedPhysicsEngine(false);
+      factory.setUseBulletPhysicsEngine(false);
+      factory.setUsePerfectSensors(true);
+      factory.setShowGUI(false);
+      factory.setAutomaticallyStartSimulation(false);
+      // Script mode: the heading-and-velocity script supplies the velocity profile (step-in-place 5s ->
+      // cruise straight 6s -> turns/side-steps, repeating). In this mode the CSG walk input provider is
+      // null, so the walkCSG yo-variable is externally writable (joystick mode clobbers it every tick).
+      HeadingAndVelocityEvaluationScriptParameters scriptParameters = new HeadingAndVelocityEvaluationScriptParameters();
+      // Empirically (run dbg2/dbg3): the script velocity reaches the CSG as a UNIT velocity, scaled by
+      // maxVelocityX = maxStepLength / (swing + transfer). Convert the commanded m/s into that fraction.
+      double maxVelocityX = maxStepLength / (swingTime + transferTime);
+      double velocityFraction = Math.min(1.0, velocity / maxVelocityX);
+      scriptParameters.setCruiseVelocity(velocityFraction);
+      scriptParameters.setMaxVelocity(velocityFraction);
+      scriptParameters.setSideStepVelocity(Math.min(velocityFraction, 0.5));
+      factory.setDefaultHighLevelHumanoidControllerFactory(true, scriptParameters);
+
+      double kxy = Double.parseDouble(System.getProperty("alice5.gc.kxy", "150000"));
+      double bxy = Double.parseDouble(System.getProperty("alice5.gc.bxy", "1000"));
+      factory.setGroundContactModelParameters(new GroundContactModelParameters(4000, 750, kxy, bxy));
+
+      SCS2AvatarSimulation avatarSimulation = factory.createAvatarSimulation();
+      avatarSimulation.setSystemExitOnDestroy(false);
+      avatarSimulation.start();
+
+      SimulationConstructionSet2 scs = avatarSimulation.getSimulationConstructionSet();
+      FloatingJointBasics rootJoint = avatarSimulation.getControllerFullRobotModel().getRootJoint();
+      YoRegistry root = scs.getRootRegistry();
+
+      YoVariable walkingState = findBySuffix(root, "walkingCurrentState");
+      YoBoolean walkCSG = (YoBoolean) findExact(root, "walkCSG");
+      YoVariable desiredVelX = findExact(root, "desiredVelocityCSGX");
+      YoVariable scriptEvent = findExact(root, "currentScriptEvent");
+      YoDouble swingCSG = (YoDouble) findExact(root, "swingTimeCSG");
+      YoDouble transferCSG = (YoDouble) findExact(root, "transferTimeCSG");
+      YoDouble maxStepLengthCSG = (YoDouble) findExact(root, "maxStepLengthCSG");
+      YoVariable tickTimer = findBySuffix(root, "controllerThreadTimerCurrent");
+      YoVariable icpErrorX = findBySuffix(root, "ICPErrorX");
+      YoVariable icpErrorY = findBySuffix(root, "ICPErrorY");
+
+      List<String> missing = new ArrayList<>();
+      if (walkingState == null) missing.add("walkingCurrentState");
+      if (walkCSG == null) missing.add("walkCSG");
+      if (tickTimer == null) missing.add("controllerThreadTimerCurrent");
+      if (!missing.isEmpty())
+      {
+         System.out.println("GATE_M2_FAILURE missing yoVariables: " + missing);
+         System.out.println("GATE_M2_FAIL");
+         avatarSimulation.destroy();
+         System.exit(3);
+      }
+
+      // Command walking BEFORE the first simulation tick (writes from this thread during the run are
+      // overwritten by the controller-side tasks; pre-run writes land — same pattern as the upstream
+      // open-alexander track). The script's STEP_IN_PLACE first event doubles as the settle phase.
+      if (swingCSG != null)
+         swingCSG.set(swingTime);
+      if (transferCSG != null)
+         transferCSG.set(transferTime);
+      if (maxStepLengthCSG != null)
+         maxStepLengthCSG.set(maxStepLength);
+      walkCSG.set(true);
+      System.out.println("[demo] walk pre-commanded (script velocity profile, cruise=" + velocity + ", swing=" + swingTime + ", transfer=" + transferTime + ")");
+
+      // step counting: listener on walking state transitions into single support
+      final int[] stepCount = {0};
+      walkingState.addListener(v -> {
+         String s = v.getValueAsString();
+         if (s.equals("WALKING_LEFT_SUPPORT") || s.equals("WALKING_RIGHT_SUPPORT"))
+            stepCount[0]++;
+      });
+
+      // controller tick compute histogram (seconds)
+      List<Double> tickSamples = new ArrayList<>(200000);
+      tickTimer.addListener(v -> {
+         double val = v.getValueAsDouble();
+         if (val > 0)
+            tickSamples.add(val);
+      });
+
+      PushRobotControllerSCS2 pushController = null;
+      if (pushTime > 0)
+      {
+         pushController = new PushRobotControllerSCS2(scs.getTime(), avatarSimulation.getRobot(), avatarSimulation.getControllerFullRobotModel());
+      }
+
+      boolean pass = true;
+      List<String> failures = new ArrayList<>();
+      double icpRmsSum = 0.0;
+      int icpRmsCount = 0;
+      double walkStartX = Double.NaN;
+      double walkStartT = Double.NaN;
+      boolean pushed = false;
+      int stepsBeforeWarmupEnd = 0;
+      List<Double> xHistory = new ArrayList<>();
+      List<Double> yHistory = new ArrayList<>();
+
+      try (PrintWriter csv = new PrintWriter(csvPath))
+      {
+         csv.println("t,rootX,rootY,rootZ,steps,icpErrX,icpErrY,walkingState,scriptEvent");
+
+         for (double t = 1.0; t <= duration + 1e-6; t += 1.0)
+         {
+            if (Math.abs(t - settleTime) < 0.5 && Double.isNaN(walkStartT))
+            {
+               walkStartX = rootJoint.getJointPose().getX();
+               walkStartT = t;
+               stepsBeforeWarmupEnd = stepCount[0];
+            }
+
+            if (pushTime > 0 && !pushed && t >= pushTime)
+            {
+               pushController.applyForce(new Vector3D(1.0, 0.0, 0.0), pushForce, pushDuration);
+               pushed = true;
+               System.out.println("[demo] push applied at t=" + t + " force=" + pushForce + "N dur=" + pushDuration + "s");
+            }
+
+            boolean ok = scs.simulateNow(1.0);
+            if (!ok)
+            {
+               failures.add("simulateNow returned false at t=" + t);
+               pass = false;
+               break;
+            }
+
+            if (Boolean.parseBoolean(System.getProperty("alice5.debug", "false")) && t >= settleTime + 3 && t < settleTime + 5)
+            {
+               for (YoVariable v : root.collectSubtreeVariables())
+               {
+                  String n = v.getName();
+                  if (n.equals("desiredVelocityCSGX") || n.equals("swingTimeCSG") || n.equals("transferTimeCSG")
+                        || n.equals("maxStepLengthCSG") || n.equals("walkCSG") || n.equals("numberOfFixedFootstepsCSG"))
+                     System.out.println("[debug] " + v.getFullNameString() + " = " + v.getValueAsString());
+               }
+            }
+
+            double x = rootJoint.getJointPose().getX();
+            double y = rootJoint.getJointPose().getY();
+            double z = rootJoint.getJointPose().getZ();
+            xHistory.add(x);
+            yHistory.add(y);
+            double ex = icpErrorX != null ? icpErrorX.getValueAsDouble() : Double.NaN;
+            double ey = icpErrorY != null ? icpErrorY.getValueAsDouble() : Double.NaN;
+            if (!Double.isNaN(ex) && t > walkStartT)
+            {
+               icpRmsSum += ex * ex + ey * ey;
+               icpRmsCount++;
+            }
+            String state = walkingState.getValueAsString();
+            String event = scriptEvent != null ? scriptEvent.getValueAsString() : "n/a";
+            csv.printf(Locale.ROOT, "%.2f,%.5f,%.5f,%.5f,%d,%.5f,%.5f,%s,%s%n", t, x, y, z, stepCount[0], ex, ey, state, event);
+
+            if (z < 0.5)
+            {
+               failures.add("FALL detected at t=" + t + " (root z=" + z + ")");
+               pass = false;
+               break;
+            }
+         }
+      }
+      catch (Exception e)
+      {
+         e.printStackTrace();
+         failures.add("exception: " + e);
+         pass = false;
+      }
+
+      double distance = Double.isNaN(walkStartX) ? 0.0 : rootJoint.getJointPose().getX() - walkStartX;
+      double walkDuration = Double.isNaN(walkStartT) ? 1.0 : duration - walkStartT;
+      // speed = max over 4 s sliding windows of horizontal displacement norm (direction-agnostic;
+      // the script includes turns/side-steps so net forward x is not a fair speed measure)
+      double avgSpeed = 0.0;
+      int window = 4;
+      for (int i = 0; i + window < xHistory.size(); i++)
+      {
+         double d = Math.hypot(xHistory.get(i + window) - xHistory.get(i), yHistory.get(i + window) - yHistory.get(i));
+         avgSpeed = Math.max(avgSpeed, d / window);
+      }
+      int steps = stepCount[0] - stepsBeforeWarmupEnd;
+      double icpRms = icpRmsCount > 0 ? Math.sqrt(icpRmsSum / (2.0 * icpRmsCount)) : Double.NaN;
+
+      // tick percentiles, skipping first 5 s worth of warmup samples
+      double p50 = Double.NaN, p99 = Double.NaN, pMax = Double.NaN;
+      int warmupSkip = (int) Math.min(tickSamples.size() * 0.1, 5.0 / robotModel.getControllerDT());
+      if (tickSamples.size() > warmupSkip + 100)
+      {
+         double[] sorted = tickSamples.subList(warmupSkip, tickSamples.size()).stream().mapToDouble(Double::doubleValue).sorted().toArray();
+         p50 = sorted[(int) (sorted.length * 0.50)];
+         p99 = sorted[(int) (sorted.length * 0.99)];
+         pMax = sorted[sorted.length - 1];
+      }
+
+      if (pass && steps < minSteps)
+      {
+         failures.add("steps " + steps + " < required " + minSteps);
+         pass = false;
+      }
+      if (pass && minSpeed > 0 && avgSpeed < minSpeed)
+      {
+         failures.add("avg speed " + avgSpeed + " < required " + minSpeed);
+         pass = false;
+      }
+      if (pushTime > 0 && !pushed)
+      {
+         failures.add("push requested but never applied");
+         pass = false;
+      }
+
+      System.out.println(String.format(Locale.ROOT,
+            "GATE_M2_METRICS steps=%d distance=%.3f avgSpeed=%.4f icpRms=%.4f tickP50=%.5f tickP99=%.5f tickMax=%.5f nTicks=%d pushed=%b",
+            steps, distance, avgSpeed, icpRms, p50, p99, pMax, tickSamples.size(), pushed));
+      for (String failure : failures)
+         System.out.println("GATE_M2_FAILURE " + failure);
+      System.out.println(pass ? "GATE_M2_PASS" : "GATE_M2_FAIL");
+
+      avatarSimulation.destroy();
+      System.exit(pass ? 0 : 2);
+   }
+
+   static YoVariable findBySuffix(YoRegistry registry, String suffix)
+   {
+      for (YoVariable variable : registry.collectSubtreeVariables())
+      {
+         if (variable.getName().endsWith(suffix))
+            return variable;
+      }
+      return null;
+   }
+
+   static YoVariable findExact(YoRegistry registry, String name)
+   {
+      for (YoVariable variable : registry.collectSubtreeVariables())
+      {
+         if (variable.getName().equals(name))
+            return variable;
+      }
+      return null;
+   }
+}
