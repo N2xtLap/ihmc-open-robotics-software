@@ -7,8 +7,6 @@ import us.ihmc.euclid.tuple3D.Vector3D;
 import us.ihmc.mecano.multiBodySystem.interfaces.FloatingJointBasics;
 import us.ihmc.scs2.SimulationConstructionSet2;
 import controller_msgs.msg.dds.ContinuousStepGeneratorInputMessage;
-import controller_msgs.msg.dds.ContinuousStepGeneratorParametersMessage;
-import us.ihmc.commonWalkingControlModules.configurations.SteppingParameters;
 import us.ihmc.commonWalkingControlModules.desiredFootStep.footstepGenerator.HeadingAndVelocityEvaluationScriptParameters;
 import us.ihmc.commonWalkingControlModules.highLevelHumanoidControl.plugin.StepGeneratorCommandInputManager;
 import us.ihmc.simulationConstructionSetTools.util.environments.CommonAvatarEnvironmentInterface;
@@ -137,6 +135,20 @@ public class Alice5TerrainWalkingDemo
       if (terrainMode)
       {
          csgInput = avatarSimulation.getStepGeneratorThread().getCsgCommandInputManager();
+         // All CSG parameters via pre-first-tick yoVariable writes (the only reliable window, M2
+         // finding). A ContinuousStepGeneratorParametersMessage would clobber stepsAreAdjustable
+         // back to false on every submit (the message has no field for it), so it is not used.
+         setYoDouble(root, "swingTimeCSG", swingTime);
+         setYoDouble(root, "transferTimeCSG", transferTime);
+         setYoDouble(root, "maxStepLengthCSG", maxStepLength);
+         setYoDouble(root, "swingHeightCSG", swingHeight);
+         String stepWidthProp = System.getProperty("alice5.stepWidth", "");
+         if (!stepWidthProp.isEmpty())
+            setYoDouble(root, "inPlaceWidthCSG", Double.parseDouble(stepWidthProp));
+         if (Boolean.parseBoolean(System.getProperty("alice5.shiftTouchdown", "false")))
+            setYoBoolean(root, "shiftUpcomingStepsWithTouchdownCSG", true);
+         if (Boolean.parseBoolean(System.getProperty("alice5.adjustableSteps", "false")))
+            setYoBoolean(root, "stepsAreAdjustableCSG", true);
          System.out.println("[demo] terrain mode: " + terrainType + " (CSG commands via message queue, vel=" + velocity
                + " m/s, swing=" + swingTime + ", transfer=" + transferTime + ", swingHeight=" + swingHeight + ")");
       }
@@ -213,24 +225,12 @@ public class Alice5TerrainWalkingDemo
       {
          csv.println("t,rootX,rootY,rootZ,steps,icpErrX,icpErrY,walkingState,scriptEvent");
 
-         SteppingParameters steppingParameters = robotModel.getWalkingControllerParameters().getSteppingParameters();
-
          for (double t = 1.0; t <= duration + 1e-6; t += 1.0)
          {
             if (csgInput != null)
             {
                // Resubmit every loop second: the input manager drops commands until the high-level
                // WALKING status opens it, and resubmission is idempotent afterwards.
-               ContinuousStepGeneratorParametersMessage parametersMessage = new ContinuousStepGeneratorParametersMessage();
-               parametersMessage.setSwingDuration(swingTime);
-               parametersMessage.setTransferDuration(transferTime);
-               parametersMessage.setSwingHeight(swingHeight);
-               parametersMessage.setMaxStepLength(maxStepLength);
-               parametersMessage.setDefaultStepWidth(steppingParameters.getInPlaceWidth());
-               parametersMessage.setMinStepWidth(steppingParameters.getMinStepWidth());
-               parametersMessage.setMaxStepWidth(steppingParameters.getMaxStepWidth());
-               csgInput.getCommandInputManager().submitMessage(parametersMessage);
-
                ContinuousStepGeneratorInputMessage inputMessage = new ContinuousStepGeneratorInputMessage();
                inputMessage.setWalk(t >= settleTime);
                inputMessage.setForwardVelocity(velocity);
@@ -390,6 +390,30 @@ public class Alice5TerrainWalkingDemo
             return variable;
       }
       return null;
+   }
+
+   static void setYoDouble(YoRegistry registry, String name, double value)
+   {
+      YoVariable variable = findExact(registry, name);
+      if (variable instanceof YoDouble)
+      {
+         ((YoDouble) variable).set(value);
+         System.out.println("[demo] pre-run " + name + "=" + value);
+      }
+      else
+         System.out.println("[demo] WARN yoVariable not found: " + name);
+   }
+
+   static void setYoBoolean(YoRegistry registry, String name, boolean value)
+   {
+      YoVariable variable = findExact(registry, name);
+      if (variable instanceof YoBoolean)
+      {
+         ((YoBoolean) variable).set(value);
+         System.out.println("[demo] pre-run " + name + "=" + value);
+      }
+      else
+         System.out.println("[demo] WARN yoVariable not found: " + name);
    }
 
    static YoVariable findExact(YoRegistry registry, String name)
