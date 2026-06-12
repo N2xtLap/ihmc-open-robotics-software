@@ -21,7 +21,19 @@ public class Alice5ContactPointParameters extends RobotContactPointParameters<Ro
             physicalProperties.getFootLengthForControl(),
             physicalProperties.getSoleToAnkleFrameTransforms());
 
-      createDefaultFootContactPoints();
+      // -Dalice5.simContactGrid=NXxNY (e.g. 8x3): simulation-only sole contact grid so a foot
+      // straddling a terrain edge contacts along the edge line like a physical sole, instead of
+      // pivoting freely on 2 of the 4 corner points. Controller support polygon stays 4 corners.
+      String grid = System.getProperty("alice5.simContactGrid", "");
+      if (grid.isEmpty())
+      {
+         createDefaultFootContactPoints();
+      }
+      else
+      {
+         String[] parts = grid.split("x");
+         createDefaultFootContactPoints(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+      }
    }
 
    public Alice5ContactPointParameters(HumanoidJointNameMap jointMap, Alice5PhysicalProperties physicalProperties,

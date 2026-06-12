@@ -6,6 +6,14 @@ import us.ihmc.commonWalkingControlModules.capturePoint.controller.ICPController
 
 public class Alice5ICPControllerParameters extends ICPControllerParameters
 {
+   @Override
+   public double getSafeCoPDistanceToEdge()
+   {
+      // T1 terrain runs (-Dalice5.safeCopEdge): keep the CoP further inside the support polygon so
+      // cell-edge partial contacts are not loaded to the rim. Upstream default 0.002.
+      return Double.parseDouble(System.getProperty("alice5.safeCopEdge", "0.002"));
+   }
+
    private FeedbackAlphaCalculator feedbackAlphaCalculator = null;
    private FeedForwardAlphaCalculator feedForwardAlphaCalculator = null;
 

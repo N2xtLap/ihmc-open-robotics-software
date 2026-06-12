@@ -70,8 +70,9 @@ public class Alice5SwingTrajectoryParameters extends SwingTrajectoryParameters
    @Override
    public double getDesiredTouchdownVelocity()
    {
-      // TODO Needs tune up
-      return -0.1;
+      // T1 terrain runs (-Dalice5.touchdownVel): faster downward probe after the planned touchdown
+      // z, so a blind step-down (-3 cm cell) finds ground sooner. Flat-ground default -0.1.
+      return Double.parseDouble(System.getProperty("alice5.touchdownVel", "-0.1"));
    }
 
    @Override

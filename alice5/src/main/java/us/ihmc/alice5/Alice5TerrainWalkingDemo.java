@@ -95,7 +95,12 @@ public class Alice5TerrainWalkingDemo
 
       double kxy = Double.parseDouble(System.getProperty("alice5.gc.kxy", "150000"));
       double bxy = Double.parseDouble(System.getProperty("alice5.gc.bxy", "1000"));
-      factory.setGroundContactModelParameters(new GroundContactModelParameters(4000, 750, kxy, bxy));
+      double kz = Double.parseDouble(System.getProperty("alice5.gc.kz", "4000"));
+      double bz = Double.parseDouble(System.getProperty("alice5.gc.bz", "750"));
+      // Per-point spring parameters: when -Dalice5.simContactGrid multiplies the contact point
+      // count, scale these down by (4 / nPoints) to keep the effective sole stiffness (M1: 5x
+      // lateral stiffness diverges).
+      factory.setGroundContactModelParameters(new GroundContactModelParameters(kz, bz, kxy, bxy));
 
       SCS2AvatarSimulation avatarSimulation = factory.createAvatarSimulation();
       avatarSimulation.setSystemExitOnDestroy(false);
