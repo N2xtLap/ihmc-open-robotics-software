@@ -171,6 +171,15 @@ public class Alice5WalkingControllerParameters extends WalkingControllerParamete
    }
 
    @Override
+   public boolean createFootholdExplorationTools()
+   {
+      // T1 uneven-terrain runs only (-Dalice5.footholdExploration=true): CoP-based partial foothold
+      // detection + support polygon cropping for cell-edge landings. Default off - M2 flat-ground
+      // behavior unchanged.
+      return Boolean.getBoolean("alice5.footholdExploration");
+   }
+
+   @Override
    public boolean allowDisturbanceRecoveryBySpeedingUpSwing()
    {
       return true;
