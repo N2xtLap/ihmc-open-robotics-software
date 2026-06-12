@@ -141,6 +141,30 @@ public class Alice5WalkingDemo
          pushController = new PushRobotControllerSCS2(scs.getTime(), avatarSimulation.getRobot(), avatarSimulation.getControllerFullRobotModel());
       }
 
+      // Optional 50 Hz qpos trajectory dump for offline MuJoCo video rendering.
+      String qposCsvPath = System.getProperty("alice5.qpos.csv", "");
+      PrintWriter qposCsv = null;
+      String[] orderedJointNames = robotModel.getJointMap().getOrderedJointNames();
+      us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] recJoints =
+            new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[orderedJointNames.length];
+      if (!qposCsvPath.isEmpty())
+      {
+         for (int i = 0; i < orderedJointNames.length; i++)
+            recJoints[i] = avatarSimulation.getControllerFullRobotModel().getOneDoFJointByName(orderedJointNames[i]);
+         try
+         {
+            qposCsv = new PrintWriter(qposCsvPath);
+            StringBuilder header = new StringBuilder("t,px,py,pz,qw,qx,qy,qz");
+            for (String name : orderedJointNames)
+               header.append(',').append(name);
+            qposCsv.println(header);
+         }
+         catch (Exception e)
+         {
+            System.out.println("[demo] qpos csv open failed: " + e);
+         }
+      }
+
       boolean pass = true;
       List<String> failures = new ArrayList<>();
       double icpRmsSum = 0.0;
@@ -172,7 +196,27 @@ public class Alice5WalkingDemo
                System.out.println("[demo] push applied at t=" + t + " force=" + pushForce + "N dur=" + pushDuration + "s");
             }
 
-            boolean ok = scs.simulateNow(1.0);
+            boolean ok = true;
+            if (qposCsv != null)
+            {
+               for (int sub = 0; sub < 50 && ok; sub++)
+               {
+                  ok = scs.simulateNow(0.02);
+                  StringBuilder row = new StringBuilder();
+                  row.append(String.format(Locale.ROOT, "%.3f", t - 1.0 + 0.02 * (sub + 1)));
+                  var pose = rootJoint.getJointPose();
+                  row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.5f", pose.getX(), pose.getY(), pose.getZ()));
+                  var q = pose.getOrientation();
+                  row.append(String.format(Locale.ROOT, ",%.6f,%.6f,%.6f,%.6f", q.getS(), q.getX(), q.getY(), q.getZ()));
+                  for (us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics joint : recJoints)
+                     row.append(String.format(Locale.ROOT, ",%.5f", joint == null ? 0.0 : joint.getQ()));
+                  qposCsv.println(row);
+               }
+            }
+            else
+            {
+               ok = scs.simulateNow(1.0);
+            }
             if (!ok)
             {
                failures.add("simulateNow returned false at t=" + t);
@@ -221,6 +265,9 @@ public class Alice5WalkingDemo
          failures.add("exception: " + e);
          pass = false;
       }
+
+      if (qposCsv != null)
+         qposCsv.close();
 
       double distance = Double.isNaN(walkStartX) ? 0.0 : rootJoint.getJointPose().getX() - walkStartX;
       double walkDuration = Double.isNaN(walkStartT) ? 1.0 : duration - walkStartT;

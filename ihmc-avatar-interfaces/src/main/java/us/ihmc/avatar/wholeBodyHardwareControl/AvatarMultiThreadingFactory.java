@@ -598,4 +598,19 @@ public class AvatarMultiThreadingFactory
    {
       return threadingManager.get();
    }
+
+   public HighLevelHumanoidControllerFactory getHighLevelHumanoidControllerFactory()
+   {
+      return controllerFactory;
+   }
+
+   public AvatarEstimatorThread getEstimatorThread()
+   {
+      return estimatorThread.get();
+   }
+
+   public AvatarLowLevelOutputProcessor getLowLevelOutputProcessor()
+   {
+      return lowLevelOutputProcessor;
+   }
 }

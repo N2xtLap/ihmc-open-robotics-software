@@ -34,7 +34,10 @@ public class Alice5StandPrepSetPoints implements WholeBodySetpointParameters
          setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.HIP_ROLL), robotSide.negateIfRightSide(0.02));
          setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.HIP_PITCH), -0.35);
          setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.KNEE_PITCH), 0.7);
-         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.ANKLE_PITCH), -0.35);
+         // -0.45 instead of -0.35: leans the body ~5.7 deg forward about the ankles. At -0.35 the
+         // model CoM is only ~18 mm (1.1 deg) ahead of the heel contact edge, and the joint-space
+         // PD gravity sag alone tips the robot backward while standing in STAND_PREP.
+         setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.ANKLE_PITCH), -0.45);
          setPoints.put(jointMap.getLegJointName(robotSide, LegJointName.ANKLE_ROLL), robotSide.negateIfRightSide(-0.02));
 
          setPoints.put(jointMap.getArmJointName(robotSide, ArmJointName.SHOULDER_PITCH), 0.2);
