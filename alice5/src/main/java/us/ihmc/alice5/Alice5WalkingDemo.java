@@ -27,6 +27,18 @@ import java.util.Locale;
  * Scenario: settle (5 s) -> walkCSG=true with commanded forward velocity -> walk until duration
  * (optional push at alice5.push.time). Metrics: steps (state-transition listener), distance/speed
  * (sim ground truth), controller tick compute p50/p99 (controllerThreadTimerCurrent listener).
+ *
+ * SIM-EXT V1 additions (both opt-in, the M2 gate path is untouched when they are off):
+ * <ul>
+ * <li>{@code -Dalice5.csg=joystick}: use the joystick stepping plugin
+ * ({@code setDefaultHighLevelHumanoidControllerFactory(false, null)}) instead of the
+ * heading-and-velocity script. CSG inputs are then driven at runtime through the YoVariableServer
+ * variable-change channel ({@code walk_StepGeneratorCommandInputManager} and friends) by a remote
+ * {@code us.ihmc.alice5.teleop} client. Requires {@code -Dcreate.yovariable.server=true}.</li>
+ * <li>{@code -Dalice5.realtime=true}: pace the simulation at 1.0x wall clock
+ * ({@code setRealTimeRateSimulation(true)} + asynchronous {@code simulate()}) instead of the
+ * synchronous {@code simulateNow} gate loop. The main thread only monitors for falls.</li>
+ * </ul>
  */
 public class Alice5WalkingDemo
 {
@@ -45,6 +57,14 @@ public class Alice5WalkingDemo
       double pushDuration = Double.parseDouble(System.getProperty("alice5.push.duration", "0.1"));
       String csvPath = System.getProperty("alice5.metrics.csv", "alice5_m2_metrics.csv");
       boolean createYoVariableServer = Boolean.parseBoolean(System.getProperty("create.yovariable.server", "false"));
+      boolean joystickCsg = "joystick".equalsIgnoreCase(System.getProperty("alice5.csg", "script"));
+      boolean realtime = Boolean.parseBoolean(System.getProperty("alice5.realtime", "false"));
+
+      if (joystickCsg && !realtime)
+      {
+         System.out.println("[demo] -Dalice5.csg=joystick requires -Dalice5.realtime=true (no scripted gate loop in joystick mode)");
+         System.exit(3);
+      }
 
       Alice5RobotModel robotModel = new Alice5RobotModel(Alice5Version.V1_FULL_ROBOT, RobotTarget.SCS);
       FlatGroundEnvironment environment = new FlatGroundEnvironment();
@@ -59,18 +79,29 @@ public class Alice5WalkingDemo
       factory.setUsePerfectSensors(true);
       factory.setShowGUI(false);
       factory.setAutomaticallyStartSimulation(false);
-      // Script mode: the heading-and-velocity script supplies the velocity profile (step-in-place 5s ->
-      // cruise straight 6s -> turns/side-steps, repeating). In this mode the CSG walk input provider is
-      // null, so the walkCSG yo-variable is externally writable (joystick mode clobbers it every tick).
-      HeadingAndVelocityEvaluationScriptParameters scriptParameters = new HeadingAndVelocityEvaluationScriptParameters();
-      // Empirically (run dbg2/dbg3): the script velocity reaches the CSG as a UNIT velocity, scaled by
-      // maxVelocityX = maxStepLength / (swing + transfer). Convert the commanded m/s into that fraction.
-      double maxVelocityX = maxStepLength / (swingTime + transferTime);
-      double velocityFraction = Math.min(1.0, velocity / maxVelocityX);
-      scriptParameters.setCruiseVelocity(velocityFraction);
-      scriptParameters.setMaxVelocity(velocityFraction);
-      scriptParameters.setSideStepVelocity(Math.min(velocityFraction, 0.5));
-      factory.setDefaultHighLevelHumanoidControllerFactory(true, scriptParameters);
+      if (joystickCsg)
+      {
+         // SIM-EXT V1 teleop mode: JoystickBasedSteppingPluginFactory. The CSG inputs are the
+         // walk_/desiredVelocity_/desiredTurningVelocity_StepGeneratorCommandInputManager
+         // yo-variables (stepGenerator thread registry, published by the YoVariableServer and
+         // writable through its variable-change channel).
+         factory.setDefaultHighLevelHumanoidControllerFactory(false, null);
+      }
+      else
+      {
+         // Script mode: the heading-and-velocity script supplies the velocity profile (step-in-place 5s ->
+         // cruise straight 6s -> turns/side-steps, repeating). In this mode the CSG walk input provider is
+         // null, so the walkCSG yo-variable is externally writable (joystick mode clobbers it every tick).
+         HeadingAndVelocityEvaluationScriptParameters scriptParameters = new HeadingAndVelocityEvaluationScriptParameters();
+         // Empirically (run dbg2/dbg3): the script velocity reaches the CSG as a UNIT velocity, scaled by
+         // maxVelocityX = maxStepLength / (swing + transfer). Convert the commanded m/s into that fraction.
+         double maxVelocityX = maxStepLength / (swingTime + transferTime);
+         double velocityFraction = Math.min(1.0, velocity / maxVelocityX);
+         scriptParameters.setCruiseVelocity(velocityFraction);
+         scriptParameters.setMaxVelocity(velocityFraction);
+         scriptParameters.setSideStepVelocity(Math.min(velocityFraction, 0.5));
+         factory.setDefaultHighLevelHumanoidControllerFactory(true, scriptParameters);
+      }
 
       double kxy = Double.parseDouble(System.getProperty("alice5.gc.kxy", "150000"));
       double bxy = Double.parseDouble(System.getProperty("alice5.gc.bxy", "1000"));
@@ -97,7 +128,7 @@ public class Alice5WalkingDemo
 
       List<String> missing = new ArrayList<>();
       if (walkingState == null) missing.add("walkingCurrentState");
-      if (walkCSG == null) missing.add("walkCSG");
+      if (walkCSG == null && !joystickCsg) missing.add("walkCSG");
       if (tickTimer == null) missing.add("controllerThreadTimerCurrent");
       if (!missing.isEmpty())
       {
@@ -107,17 +138,37 @@ public class Alice5WalkingDemo
          System.exit(3);
       }
 
-      // Command walking BEFORE the first simulation tick (writes from this thread during the run are
-      // overwritten by the controller-side tasks; pre-run writes land — same pattern as the upstream
-      // open-alexander track). The script's STEP_IN_PLACE first event doubles as the settle phase.
-      if (swingCSG != null)
-         swingCSG.set(swingTime);
-      if (transferCSG != null)
-         transferCSG.set(transferTime);
-      if (maxStepLengthCSG != null)
-         maxStepLengthCSG.set(maxStepLength);
-      walkCSG.set(true);
-      System.out.println("[demo] walk pre-commanded (script velocity profile, cruise=" + velocity + ", swing=" + swingTime + ", transfer=" + transferTime + ")");
+      if (joystickCsg)
+      {
+         // Teleop mode: no pre-commanded walk. Report the CSG input variables that the remote
+         // teleop client will write through the YoVariableServer change channel.
+         YoVariable walkInput = findExact(root, "walk_StepGeneratorCommandInputManager");
+         YoVariable velInputX = findExact(root, "desiredVelocity_StepGeneratorCommandInputManagerX");
+         YoVariable velInputY = findExact(root, "desiredVelocity_StepGeneratorCommandInputManagerY");
+         YoVariable turnInput = findExact(root, "desiredTurningVelocity_StepGeneratorCommandInputManager");
+         System.out.println("[demo] csg=joystick walkInput=" + fullName(walkInput) + " velX=" + fullName(velInputX)
+               + " velY=" + fullName(velInputY) + " turn=" + fullName(turnInput));
+         if (walkInput == null || velInputX == null || velInputY == null || turnInput == null)
+         {
+            System.out.println("SIMEXT_RT_FAIL missing StepGeneratorCommandInputManager yoVariables");
+            avatarSimulation.destroy();
+            System.exit(3);
+         }
+      }
+      else
+      {
+         // Command walking BEFORE the first simulation tick (writes from this thread during the run are
+         // overwritten by the controller-side tasks; pre-run writes land -- same pattern as the upstream
+         // open-alexander track). The script's STEP_IN_PLACE first event doubles as the settle phase.
+         if (swingCSG != null)
+            swingCSG.set(swingTime);
+         if (transferCSG != null)
+            transferCSG.set(transferTime);
+         if (maxStepLengthCSG != null)
+            maxStepLengthCSG.set(maxStepLength);
+         walkCSG.set(true);
+         System.out.println("[demo] walk pre-commanded (script velocity profile, cruise=" + velocity + ", swing=" + swingTime + ", transfer=" + transferTime + ")");
+      }
 
       // step counting: listener on walking state transitions into single support
       final int[] stepCount = {0};
@@ -134,6 +185,13 @@ public class Alice5WalkingDemo
          if (val > 0)
             tickSamples.add(val);
       });
+
+      if (realtime)
+      {
+         // SIM-EXT V1: real-time pacing branch. Never returns (exits the JVM). Push and qpos-CSV
+         // options are not supported here; the M2 gate loop below is bypassed entirely.
+         runRealtimePaced(avatarSimulation, scs, rootJoint, duration, stepCount, walkingState);
+      }
 
       PushRobotControllerSCS2 pushController = null;
       if (pushTime > 0)
@@ -319,6 +377,71 @@ public class Alice5WalkingDemo
 
       avatarSimulation.destroy();
       System.exit(pass ? 0 : 2);
+   }
+
+   /**
+    * SIM-EXT V1: run the already-started simulation at 1.0x wall clock and monitor it from the main
+    * thread (no yoVariable writes from here -- mid-run main-thread writes are lost, see M2 notes).
+    * Exits the JVM: 0 = completed, 2 = fall or early stop.
+    */
+   static void runRealtimePaced(SCS2AvatarSimulation avatarSimulation, SimulationConstructionSet2 scs, FloatingJointBasics rootJoint,
+                                double duration, int[] stepCount, YoVariable walkingState)
+   {
+      scs.setRealTimeRateSimulation(true);
+      scs.simulate(duration);
+      System.out.println("[rt] real-time pacing enabled (1.0x wall clock), duration=" + duration + " s");
+
+      boolean fall = false;
+      boolean stoppedEarly = false;
+      double lastT = -1.0;
+      int stallTicks = 0;
+      while (true)
+      {
+         try
+         {
+            Thread.sleep(1000);
+         }
+         catch (InterruptedException e)
+         {
+            break;
+         }
+         double t = scs.getTime().getValue();
+         double z = rootJoint.getJointPose().getZ();
+         System.out.println(String.format(Locale.ROOT, "[rt] t=%.1f z=%.3f steps=%d state=%s",
+                                          t, z, stepCount[0], walkingState.getValueAsString()));
+         if (z < 0.5)
+         {
+            System.out.println("[rt] FALL detected (root z=" + z + ")");
+            fall = true;
+            break;
+         }
+         if (t >= duration - 1e-3)
+            break;
+         if (t == lastT)
+         {
+            stallTicks++;
+            if (stallTicks >= 10 && !scs.isSimulating())
+            {
+               System.out.println("[rt] simulation stopped early at t=" + t);
+               stoppedEarly = true;
+               break;
+            }
+         }
+         else
+         {
+            stallTicks = 0;
+         }
+         lastT = t;
+      }
+
+      System.out.println(fall || stoppedEarly ? "SIMEXT_RT_FAIL" : "SIMEXT_RT_DONE");
+      avatarSimulation.destroy();
+      System.exit(fall || stoppedEarly ? 2 : 0);
+   }
+
+   static String fullName(YoVariable variable)
+   {
+      return variable == null ? "MISSING" : variable.getFullNameString();
    }
 
    static YoVariable findBySuffix(YoRegistry registry, String suffix)

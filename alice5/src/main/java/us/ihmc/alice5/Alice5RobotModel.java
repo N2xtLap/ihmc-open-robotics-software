@@ -273,7 +273,10 @@ public class Alice5RobotModel implements DRCRobotModel
    @Override
    public DataServerSettings getLogSettings()
    {
-      return new DataServerSettings(true);
+      // SIM-EXT V1: port override so concurrent sims on one machine do not collide on 8008.
+      DataServerSettings logSettings = new DataServerSettings(true);
+      logSettings.setPort(Integer.getInteger("alice5.dataserver.port", DataServerSettings.DEFAULT_PORT));
+      return logSettings;
    }
 
    @Override
