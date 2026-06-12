@@ -69,6 +69,21 @@ public class Alice5FlatGroundDemo
 
       System.out.println("[demo] icpErrorX=" + name(icpErrorX) + " icpErrorY=" + name(icpErrorY) + " walkingState=" + name(walkingState));
 
+      // SIM-EXT ARM-1: optional 1 Hz arm jointspace diagnostic (desired q_d_* vs actual q).
+      boolean armDiag = Boolean.parseBoolean(System.getProperty("alice5.armDiag", "false"));
+      String[] armDiagNames = {"l_sh_p", "l_sh_r", "l_el_p", "r_sh_p", "r_sh_r", "r_el_p"};
+      us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] armDiagJoints =
+            new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[armDiagNames.length];
+      YoVariable[] armDiagDesired = new YoVariable[armDiagNames.length];
+      if (armDiag)
+      {
+         for (int i = 0; i < armDiagNames.length; i++)
+         {
+            armDiagJoints[i] = avatarSimulation.getControllerFullRobotModel().getOneDoFJointByName(armDiagNames[i]);
+            armDiagDesired[i] = findExact(scs.getRootRegistry(), "q_d_" + armDiagNames[i]);
+         }
+      }
+
       boolean pass = true;
       List<String> failures = new ArrayList<>();
       double refX = Double.NaN, refY = Double.NaN;
@@ -88,6 +103,18 @@ public class Alice5FlatGroundDemo
                failures.add("simulateNow returned false at t=" + t + " (controller exception or sim crash)");
                pass = false;
                break;
+            }
+
+            if (armDiag)
+            {
+               StringBuilder sb = new StringBuilder(String.format(Locale.ROOT, "[armdiag] t=%.1f", t));
+               for (int i = 0; i < armDiagNames.length; i++)
+               {
+                  double q = armDiagJoints[i] == null ? Double.NaN : armDiagJoints[i].getQ();
+                  String qd = armDiagDesired[i] == null ? "n/a" : String.format(Locale.ROOT, "%.4f", armDiagDesired[i].getValueAsDouble());
+                  sb.append(String.format(Locale.ROOT, " %s q=%.4f q_d=%s", armDiagNames[i], q, qd));
+               }
+               System.out.println(sb);
             }
 
             double x = rootJoint.getJointPose().getX();
@@ -162,6 +189,16 @@ public class Alice5FlatGroundDemo
       for (YoVariable variable : registry.collectSubtreeVariables())
       {
          if (variable.getName().endsWith(suffix))
+            return variable;
+      }
+      return null;
+   }
+
+   private static YoVariable findExact(YoRegistry registry, String name)
+   {
+      for (YoVariable variable : registry.collectSubtreeVariables())
+      {
+         if (variable.getName().equals(name))
             return variable;
       }
       return null;

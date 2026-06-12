@@ -42,8 +42,13 @@ public class Alice5ICPControllerParameters extends ICPControllerParameters
    public ICPControlGainsReadOnly getICPFeedbackGains()
    {
       ICPControlGains gains = new ICPControlGains();
-      gains.setKpOrthogonalToMotion(2.0);
-      gains.setKpParallelToMotion(2.5);
+      // SIM-EXT ARM-1: kp 2.0/2.5 -> 2.5/3.0. With the arms position-held (Alice5JointMap.getHandName
+      // fix) the implicit reaction-mass slack the QP used to get from the 6 uncontrolled arm joints is
+      // gone and the M2 script fell at the side-step -> stop transfer (icpErrY 0.035 -> 0.099 at t=44).
+      // Slightly stronger ICP feedback restores the lateral recovery margin; QP-side arm weight sweeps
+      // (1.0/0.5/0.1) and angular-z momentum weight (0.1 -> 0.05) were inert (identical trajectories).
+      gains.setKpOrthogonalToMotion(2.5);
+      gains.setKpParallelToMotion(3.0);
       gains.setKi(2.0);
       return gains;
    }

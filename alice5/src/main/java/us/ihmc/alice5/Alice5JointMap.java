@@ -188,7 +188,10 @@ public class Alice5JointMap implements HumanoidJointNameMap
    @Override
    public String getHandName(RobotSide robotSide)
    {
-      return null;
+      // SIM-EXT ARM-1: the distal arm link doubles as the "hand" body. Returning null here meant
+      // WalkingHighLevelHumanoidController never created the arm RigidBodyControlManagers, leaving
+      // sh_p/sh_r/el_p completely uncontrolled in the WBC QP (arms drifted to ~87 deg abduction).
+      return robotSide == RobotSide.LEFT ? "left_elbow_pitch_link" : "right_elbow_pitch_link";
    }
 
    @Override

@@ -170,6 +170,21 @@ public class Alice5WalkingDemo
          System.out.println("[demo] walk pre-commanded (script velocity profile, cruise=" + velocity + ", swing=" + swingTime + ", transfer=" + transferTime + ")");
       }
 
+      // SIM-EXT ARM-1: optional 1 Hz arm jointspace diagnostic (desired q_d_* vs actual q).
+      boolean armDiag = Boolean.parseBoolean(System.getProperty("alice5.armDiag", "false"));
+      String[] armDiagNames = {"l_sh_p", "l_sh_r", "l_el_p", "r_sh_p", "r_sh_r", "r_el_p"};
+      us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] armDiagJoints =
+            new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[armDiagNames.length];
+      YoVariable[] armDiagDesired = new YoVariable[armDiagNames.length];
+      if (armDiag)
+      {
+         for (int i = 0; i < armDiagNames.length; i++)
+         {
+            armDiagJoints[i] = avatarSimulation.getControllerFullRobotModel().getOneDoFJointByName(armDiagNames[i]);
+            armDiagDesired[i] = findExact(root, "q_d_" + armDiagNames[i]);
+         }
+      }
+
       // step counting: listener on walking state transitions into single support
       final int[] stepCount = {0};
       walkingState.addListener(v -> {
@@ -280,6 +295,18 @@ public class Alice5WalkingDemo
                failures.add("simulateNow returned false at t=" + t);
                pass = false;
                break;
+            }
+
+            if (armDiag)
+            {
+               StringBuilder sb = new StringBuilder(String.format(Locale.ROOT, "[armdiag] t=%.1f", t));
+               for (int i = 0; i < armDiagNames.length; i++)
+               {
+                  double q = armDiagJoints[i] == null ? Double.NaN : armDiagJoints[i].getQ();
+                  String qd = armDiagDesired[i] == null ? "n/a" : String.format(Locale.ROOT, "%.4f", armDiagDesired[i].getValueAsDouble());
+                  sb.append(String.format(Locale.ROOT, " %s q=%.4f q_d=%s", armDiagNames[i], q, qd));
+               }
+               System.out.println(sb);
             }
 
             if (Boolean.parseBoolean(System.getProperty("alice5.debug", "false")) && t >= settleTime + 3 && t < settleTime + 5)
