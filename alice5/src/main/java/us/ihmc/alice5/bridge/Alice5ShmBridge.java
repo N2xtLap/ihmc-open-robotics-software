@@ -26,7 +26,7 @@ public class Alice5ShmBridge
    public static final int SHM_SIZE = 4096;
    public static final int N_JOINTS = 23;
    public static final long MAGIC = 0x414C494345355742L; // "ALICE5WB" little-endian
-   public static final int ABI_VERSION = 1;
+   public static final int ABI_VERSION = 2; // v2 (M3.5+M3.7 single bump): validity bit0/1=wrench, 2/3=CoP, 4=IMU
    public static final int STATE_OFFSET = 64;
    public static final int STATE_SIZE = 1536;
    public static final int CMD_OFFSET = 1600;
@@ -80,7 +80,7 @@ public class Alice5ShmBridge
    private static final int C_KD = 768;
 
    /** Must match the machine-generated string hashed by the Rust creator (FNV-1a 64). */
-   private static final String LAYOUT_STRING = "v1:n=23;s.seq:0;s.safety:4;s.t:8;s.cycle:16;s.q:24;s.qd:208;s.tau:392;s.sw:576;"
+   private static final String LAYOUT_STRING = "v2:n=23;s.seq:0;s.safety:4;s.t:8;s.cycle:16;s.q:24;s.qd:208;s.tau:392;s.sw:576;"
          + "s.fault:624;s.quat:632;s.gyro:664;s.acc:688;s.ft:712;s.ftv:808;"
          + "c.seq:0;c.mode:4;c.hb:8;c.tj:16;c.en:24;c.qdes:32;c.qddes:216;c.tauff:400;c.kp:584;c.kd:768;";
 
