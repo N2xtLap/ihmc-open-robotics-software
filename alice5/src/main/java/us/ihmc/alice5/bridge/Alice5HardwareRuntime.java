@@ -34,7 +34,8 @@ import us.ihmc.yoVariables.variable.YoEnum;
  * useMultiThreading=false (single-threaded master loop at the estimator period).
  * <p>
  * Exit codes: 0 normal completion, 4 shared-memory open/validation failure.
- * System properties: -Dalice5.runtime.duration=&lt;seconds&gt; (default 30).
+ * System properties: -Dalice5.runtime.duration=&lt;seconds&gt; (default 30),
+ * -Dalice5.rtstats=&lt;true|false&gt; (default true: RT health diagnostics, SIM-EXT RT-OBS).
  */
 public class Alice5HardwareRuntime
 {
@@ -74,6 +75,12 @@ public class Alice5HardwareRuntime
 
       Alice5ShmCommunication communication = new Alice5ShmCommunication(bridge, robotModel.getJointMap().getOrderedJointNames(), masterThreadDt);
       rootRegistry.addChild(communication.getRegistry());
+
+      // RT health diagnostics (SIM-EXT RT-OBS): best-effort, never touches the control path.
+      boolean rtStatsEnabled = Boolean.parseBoolean(System.getProperty("alice5.rtstats", "true"));
+      Alice5RtStats rtStats = rtStatsEnabled ? new Alice5RtStats(robotModel.getControllerDT()) : null;
+      if (rtStats != null)
+         rootRegistry.addChild(rtStats.getRegistry());
 
       Alice5ShmSensorReaderFactory sensorReaderFactory = new Alice5ShmSensorReaderFactory(robotModel.getStateEstimatorParameters());
 
@@ -134,6 +141,16 @@ public class Alice5HardwareRuntime
 
       manager.addPostControllerThreadRunnable(controllerTickCount::incrementAndGet);
 
+      if (rtStats != null)
+      {
+         // ControllerTask's ThreadTimer ("ControllerTimer", ms) is the tick duration source;
+         // ControllerTask only supports post-task callbacks (pre-task throws upstream). The
+         // controller thread registry is NOT under rootRegistry (it is registered straight
+         // with the YoVariableServer), so look it up through the factory.
+         rtStats.setControllerTickTimer((YoDouble) factory.getControllerRegistry().findVariable("ControllerTimer"));
+         manager.addPostControllerThreadRunnable(rtStats::onControllerTickEnd);
+      }
+
       try
       {
          yoVariableServer.start();
@@ -151,7 +168,7 @@ public class Alice5HardwareRuntime
       sequencer.setDaemon(true);
       sequencer.start();
 
-      Thread statusLogger = new Thread(() -> runStatusLogger(communication, outputProcessor, fullRobotModel, startTimeNs), "Alice5StatusLogger");
+      Thread statusLogger = new Thread(() -> runStatusLogger(communication, outputProcessor, fullRobotModel, startTimeNs, rtStats), "Alice5StatusLogger");
       statusLogger.setDaemon(true);
       statusLogger.start();
 
@@ -315,7 +332,8 @@ public class Alice5HardwareRuntime
    private static void runStatusLogger(Alice5ShmCommunication communication,
                                        AvatarLowLevelOutputProcessor outputProcessor,
                                        FullHumanoidRobotModel fullRobotModel,
-                                       long startTimeNs)
+                                       long startTimeNs,
+                                       Alice5RtStats rtStats)
    {
       try
       {
@@ -349,7 +367,9 @@ public class Alice5HardwareRuntime
                }
             }
 
-            System.out.println(String.format("RUNTIME t=%.1f state=%s hlc=%s rootZ(estimator pelvis z)=%.4f masterGain=%.2f desiredPosJoints=%d controllerTicks=%d frozen=" + frozen + " streak=" + standingStreakSeconds,
+            String rtSummary = rtStats == null ? "" : " " + rtStats.updateAndSummarize(frozen);
+
+            System.out.println(String.format("RUNTIME t=%.1f state=%s hlc=%s rootZ(estimator pelvis z)=%.4f masterGain=%.2f desiredPosJoints=%d controllerTicks=%d frozen=" + frozen + " streak=" + standingStreakSeconds + rtSummary,
                                              elapsed,
                                              safetyName,
                                              hlcName,
