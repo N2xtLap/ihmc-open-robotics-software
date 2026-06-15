@@ -12,9 +12,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * ALICE5 stand-prep pose: slight crouch within joint limits
- * (hip_p range [-1.745, 0.349]: negative = leg forward; knee_p range [-0.1, 2.1]: positive = flexion;
- * ankle_p range [-1.169, 0.489]: negative compensates knee flexion to keep the sole flat).
+ * ALICE5 stand-prep pose: slight crouch within joint limits. Sign conventions: hip_p negative =
+ * leg forward, knee_p positive = flexion, ankle_p negative compensates knee flexion to keep the
+ * sole flat. Joint ranges are loaded at runtime from the model assets (not inlined here).
  */
 public class Alice5StandPrepSetPoints implements WholeBodySetpointParameters
 {
