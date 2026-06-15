@@ -238,6 +238,30 @@ public class Alice5WalkingDemo
          }
       }
 
+      // SIM-EXT T2: optional foot sole-frame world-z dump for offline touchdown-impact analysis.
+      // Both feet's sole-frame (contact surface) z are written each substep alongside the walking-state
+      // string; vz is finite-differenced offline and the touchdown impact speed is the swing foot's |vz|
+      // at ground contact (see scripts/twin/foot_touchdown.py). Off by default -> M2 path untouched.
+      // -Dalice5.footdump.dt sets the sub-step / sample period (default 0.005 s = 200 Hz; 20 ms phase-
+      // quantizes the contact velocity since the foot moves up to ~10 mm per 20 ms interval).
+      String footCsvPath = System.getProperty("alice5.footdump.csv", "");
+      double footDumpDt = Double.parseDouble(System.getProperty("alice5.footdump.dt", "0.005"));
+      PrintWriter footCsv = null;
+      us.ihmc.robotics.robotSide.SideDependentList<us.ihmc.mecano.frames.MovingReferenceFrame> soleFrames = null;
+      if (!footCsvPath.isEmpty())
+      {
+         soleFrames = avatarSimulation.getControllerFullRobotModel().getSoleFrames();
+         try
+         {
+            footCsv = new PrintWriter(footCsvPath);
+            footCsv.println("t,lSoleZ,rSoleZ,walkingState");
+         }
+         catch (Exception e)
+         {
+            System.out.println("[demo] foot csv open failed: " + e);
+         }
+      }
+
       boolean pass = true;
       List<String> failures = new ArrayList<>();
       double icpRmsSum = 0.0;
@@ -270,20 +294,39 @@ public class Alice5WalkingDemo
             }
 
             boolean ok = true;
-            if (qposCsv != null)
+            if (qposCsv != null || footCsv != null)
             {
-               for (int sub = 0; sub < 50 && ok; sub++)
+               // Sub-step the 1 s tick. Foot dump (touchdown vz) needs fine sampling (default 5 ms);
+               // qpos video alone is fine at 20 ms. When the foot dump is on it sets the cadence.
+               double subDt = footCsv != null ? footDumpDt : 0.02;
+               int nSub = (int) Math.round(1.0 / subDt);
+               for (int sub = 0; sub < nSub && ok; sub++)
                {
-                  ok = scs.simulateNow(0.02);
-                  StringBuilder row = new StringBuilder();
-                  row.append(String.format(Locale.ROOT, "%.3f", t - 1.0 + 0.02 * (sub + 1)));
-                  var pose = rootJoint.getJointPose();
-                  row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.5f", pose.getX(), pose.getY(), pose.getZ()));
-                  var q = pose.getOrientation();
-                  row.append(String.format(Locale.ROOT, ",%.6f,%.6f,%.6f,%.6f", q.getS(), q.getX(), q.getY(), q.getZ()));
-                  for (us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics joint : recJoints)
-                     row.append(String.format(Locale.ROOT, ",%.5f", joint == null ? 0.0 : joint.getQ()));
-                  qposCsv.println(row);
+                  ok = scs.simulateNow(subDt);
+                  double subT = t - 1.0 + subDt * (sub + 1);
+                  if (qposCsv != null)
+                  {
+                     StringBuilder row = new StringBuilder();
+                     row.append(String.format(Locale.ROOT, "%.3f", subT));
+                     var pose = rootJoint.getJointPose();
+                     row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.5f", pose.getX(), pose.getY(), pose.getZ()));
+                     var q = pose.getOrientation();
+                     row.append(String.format(Locale.ROOT, ",%.6f,%.6f,%.6f,%.6f", q.getS(), q.getX(), q.getY(), q.getZ()));
+                     for (us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics joint : recJoints)
+                        row.append(String.format(Locale.ROOT, ",%.5f", joint == null ? 0.0 : joint.getQ()));
+                     qposCsv.println(row);
+                  }
+                  if (footCsv != null)
+                  {
+                     us.ihmc.euclid.referenceFrame.FramePoint3D lSole =
+                           new us.ihmc.euclid.referenceFrame.FramePoint3D(soleFrames.get(us.ihmc.robotics.robotSide.RobotSide.LEFT));
+                     us.ihmc.euclid.referenceFrame.FramePoint3D rSole =
+                           new us.ihmc.euclid.referenceFrame.FramePoint3D(soleFrames.get(us.ihmc.robotics.robotSide.RobotSide.RIGHT));
+                     lSole.changeFrame(us.ihmc.euclid.referenceFrame.ReferenceFrame.getWorldFrame());
+                     rSole.changeFrame(us.ihmc.euclid.referenceFrame.ReferenceFrame.getWorldFrame());
+                     footCsv.println(String.format(Locale.ROOT, "%.3f,%.6f,%.6f,%s",
+                           subT, lSole.getZ(), rSole.getZ(), walkingState.getValueAsString()));
+                  }
                }
             }
             else
@@ -353,6 +396,8 @@ public class Alice5WalkingDemo
 
       if (qposCsv != null)
          qposCsv.close();
+      if (footCsv != null)
+         footCsv.close();
 
       double distance = Double.isNaN(walkStartX) ? 0.0 : rootJoint.getJointPose().getX() - walkStartX;
       double walkDuration = Double.isNaN(walkStartT) ? 1.0 : duration - walkStartT;

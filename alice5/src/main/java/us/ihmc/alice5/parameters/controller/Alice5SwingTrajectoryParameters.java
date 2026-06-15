@@ -27,13 +27,24 @@ public class Alice5SwingTrajectoryParameters extends SwingTrajectoryParameters
    @Override
    public Tuple3DReadOnly getTouchdownVelocityWeight()
    {
-      return new Vector3D(30.0, 30.0, Double.POSITIVE_INFINITY);
+      // SIM-EXT T2 sweep hook: z weight is INF by default (controller rigidly tracks the touchdown
+      // velocity). -Dalice5.touchdownVelWeightZ lets a run trade that for a finite weight.
+      String wz = System.getProperty("alice5.touchdownVelWeightZ", "");
+      double weightZ = wz.isEmpty() ? Double.POSITIVE_INFINITY : Double.parseDouble(wz);
+      return new Vector3D(30.0, 30.0, weightZ);
    }
 
    @Override
    public double getDefaultSwingHeight()
    {
-      return 0.09;
+      // SIM-EXT T2: lowered 0.09 -> 0.04 to soften flat-ground touchdown. The sole-frame contact
+      // |vz| is set by the swing arc geometry (height/time), NOT the touchdown velocity/accel
+      // setpoints (contact happens mid-descent, before the trajectory's terminal phase, so those
+      // setpoints never reach the contact point -- see docs/gates/SIMEXT_T2.md). A lower arc means
+      // a gentler descent: contact |vz| 0.54 -> 0.31 m/s (-43%), M2 preserved. Floor is
+      // getMinSwingHeight()=0.025. Terrain/T1 is unaffected: it sets swingHeightCSG=0.10 explicitly
+      // (Alice5TerrainWalkingDemo), overriding this default. -Dalice5.swingHeight overrides for sweeps.
+      return Double.parseDouble(System.getProperty("alice5.swingHeight", "0.04"));
    }
 
    @Override
@@ -78,8 +89,11 @@ public class Alice5SwingTrajectoryParameters extends SwingTrajectoryParameters
    @Override
    public double getDesiredTouchdownAcceleration()
    {
-      // TODO Needs tune up
-      return -2.0;
+      // SIM-EXT T2: downward accel commanded at touchdown. The original -2.0 ("Needs tune up")
+      // drives the foot to accelerate INTO the ground (measured sole contact |vz| ~0.54 m/s, ~5x
+      // the -0.1 touchdown velocity). -Dalice5.touchdownAccel sweeps it; 0.0 removes the downward
+      // push so the swing trajectory's terminal phase can bleed off velocity before contact.
+      return Double.parseDouble(System.getProperty("alice5.touchdownAccel", "-2.0"));
    }
 
    @Override
