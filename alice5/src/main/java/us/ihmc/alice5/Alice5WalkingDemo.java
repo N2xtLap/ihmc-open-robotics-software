@@ -7,6 +7,16 @@ import us.ihmc.euclid.tuple3D.Vector3D;
 import us.ihmc.mecano.multiBodySystem.interfaces.FloatingJointBasics;
 import us.ihmc.scs2.SimulationConstructionSet2;
 import us.ihmc.commonWalkingControlModules.desiredFootStep.footstepGenerator.HeadingAndVelocityEvaluationScriptParameters;
+import us.ihmc.commonWalkingControlModules.highLevelHumanoidControl.factories.HighLevelHumanoidControllerFactory;
+import us.ihmc.communication.controllerAPI.CommandInputManager;
+import controller_msgs.msg.dds.FootstepDataListMessage;
+import controller_msgs.msg.dds.FootstepDataMessage;
+import us.ihmc.euclid.referenceFrame.FramePoint3D;
+import us.ihmc.euclid.referenceFrame.ReferenceFrame;
+import us.ihmc.euclid.tuple4D.Quaternion;
+import us.ihmc.mecano.frames.MovingReferenceFrame;
+import us.ihmc.robotics.robotSide.RobotSide;
+import us.ihmc.robotics.robotSide.SideDependentList;
 import us.ihmc.simulationConstructionSetTools.util.environments.FlatGroundEnvironment;
 import us.ihmc.simulationToolkit.controllers.PushRobotControllerSCS2;
 import us.ihmc.wholeBodyController.RobotContactPointParameters.GroundContactModelParameters;
@@ -60,6 +70,13 @@ public class Alice5WalkingDemo
       boolean joystickCsg = "joystick".equalsIgnoreCase(System.getProperty("alice5.csg", "script"));
       boolean realtime = Boolean.parseBoolean(System.getProperty("alice5.realtime", "false"));
 
+      // M5 conservative forward profile: a fixed FootstepDataListMessage (4 in-place steps then forward
+      // steps at the profile step length) is submitted to the walking controller's CommandInputManager.
+      // NO eval-script (the shared HeadingAndVelocityEvaluationScript turns 180 at t~12) and NO continuous
+      // step generator -- the standing-balance walking state consumes the queue directly. Step geometry,
+      // swing/transfer timing, and swing-arc height are commanded explicitly per the conservative profile.
+      boolean m5Conservative = "m5conservative".equalsIgnoreCase(System.getProperty("alice5.scenario", ""));
+
       if (joystickCsg && !realtime)
       {
          System.out.println("[demo] -Dalice5.csg=joystick requires -Dalice5.realtime=true (no scripted gate loop in joystick mode)");
@@ -79,7 +96,21 @@ public class Alice5WalkingDemo
       factory.setUsePerfectSensors(true);
       factory.setShowGUI(false);
       factory.setAutomaticallyStartSimulation(false);
-      if (joystickCsg)
+      HighLevelHumanoidControllerFactory m5ControllerFactory = null;
+      if (m5Conservative)
+      {
+         // M5 conservative forward profile: forward motion is commanded by submitting an explicit
+         // FootstepDataListMessage to the walking controller's CommandInputManager (see the gate loop):
+         // the controller's standing-balance "WALKING" high-level state consumes a footstep queue
+         // directly, so there is no eval-script (no turns/side-steps at t~12) and no continuous-step-
+         // generator walk-trigger to coax. Geometry is commanded directly: 4 in-place steps then forward
+         // steps at the profile step length. The script=false+null path installs the joystick stepping
+         // plugin whose generator stays idle (no walk input written), so it never auto-submits competing
+         // footsteps -- our queue is the only footstep source. Capture the controller factory to reach
+         // its CommandInputManager.
+         m5ControllerFactory = factory.setDefaultHighLevelHumanoidControllerFactory(false, null);
+      }
+      else if (joystickCsg)
       {
          // SIM-EXT V1 teleop mode: JoystickBasedSteppingPluginFactory. The CSG inputs are the
          // walk_/desiredVelocity_/desiredTurningVelocity_StepGeneratorCommandInputManager
@@ -126,6 +157,11 @@ public class Alice5WalkingDemo
       YoVariable icpErrorX = findBySuffix(root, "ICPErrorX");
       YoVariable icpErrorY = findBySuffix(root, "ICPErrorY");
 
+      // M5 realized forward-speed ceiling: the walking controller advances at most one maxStepLength step
+      // every (swing+transfer) s, so steady forward speed = maxStepLength/(swing+transfer). The conservative
+      // profile's written vel (0.1 m/s) exceeds this geometric ceiling (~0.067) -- documented in M5.md.
+      double m5VelCeiling = maxStepLength / (swingTime + transferTime);
+
       List<String> missing = new ArrayList<>();
       if (walkingState == null) missing.add("walkingCurrentState");
       if (walkCSG == null && !joystickCsg) missing.add("walkCSG");
@@ -138,22 +174,38 @@ public class Alice5WalkingDemo
          System.exit(3);
       }
 
-      if (joystickCsg)
+      // M5: build the conservative footstep queue and the controller command-input handle. The queue is
+      // built lazily in the gate loop (after the controller has settled into standing balance) from the
+      // live sole-frame world poses, then submitted once. See buildM5FootstepList.
+      CommandInputManager m5CommandInput = null;
+      boolean m5Submitted = false;
+      int m5InPlaceSteps = Integer.parseInt(System.getProperty("alice5.inPlaceSteps", "4"));
+      double m5SubmitTime = Double.parseDouble(System.getProperty("alice5.m5SubmitTime", "2.0"));
+      double swingHeightProp = Double.parseDouble(System.getProperty("alice5.swingHeight", "0.04"));
+      if (m5Conservative)
       {
-         // Teleop mode: no pre-commanded walk. Report the CSG input variables that the remote
-         // teleop client will write through the YoVariableServer change channel.
-         YoVariable walkInput = findExact(root, "walk_StepGeneratorCommandInputManager");
-         YoVariable velInputX = findExact(root, "desiredVelocity_StepGeneratorCommandInputManagerX");
-         YoVariable velInputY = findExact(root, "desiredVelocity_StepGeneratorCommandInputManagerY");
-         YoVariable turnInput = findExact(root, "desiredTurningVelocity_StepGeneratorCommandInputManager");
-         System.out.println("[demo] csg=joystick walkInput=" + fullName(walkInput) + " velX=" + fullName(velInputX)
-               + " velY=" + fullName(velInputY) + " turn=" + fullName(turnInput));
-         if (walkInput == null || velInputX == null || velInputY == null || turnInput == null)
+         m5CommandInput = m5ControllerFactory != null ? m5ControllerFactory.getCommandInputManager() : null;
+         if (m5CommandInput == null)
          {
-            System.out.println("SIMEXT_RT_FAIL missing StepGeneratorCommandInputManager yoVariables");
+            System.out.println("GATE_M2_FAILURE M5 controller CommandInputManager unavailable");
+            System.out.println("GATE_M2_FAIL");
             avatarSimulation.destroy();
             System.exit(3);
          }
+         System.out.println("[demo] M5 conservative profile: " + m5InPlaceSteps + " in-place steps -> forward at "
+               + maxStepLength + " m/step (swing=" + swingTime + ", transfer=" + transferTime + ", swingHeight="
+               + swingHeightProp + "); realized fwd speed ~= maxStep/(swing+transfer) = "
+               + String.format(Locale.ROOT, "%.4f", m5VelCeiling) + " m/s (vel=" + velocity
+               + " m/s as written exceeds this geometric ceiling -- see docs/gates/M5.md).");
+      }
+
+      if (m5Conservative)
+      {
+         // nothing pre-run; the footstep message is submitted in the gate loop after settling.
+      }
+      else if (joystickCsg)
+      {
+         // Teleop mode: no pre-commanded walk (remote client drives the CSG inputs at runtime).
       }
       else
       {
@@ -293,6 +345,20 @@ public class Alice5WalkingDemo
 
          for (double t = 1.0; t <= duration + 1e-6; t += 1.0)
          {
+            if (m5Conservative && !m5Submitted && t >= m5SubmitTime)
+            {
+               // Build the conservative footstep queue from the live sole poses now that the robot is in
+               // standing balance, then submit it once. The walking controller's standing-balance state
+               // consumes the FootstepDataListMessage and walks it out: in-place steps first (each foot
+               // lifts and lands at its current spot), then forward steps at maxStepLength spacing.
+               FootstepDataListMessage footMessage = buildM5FootstepList(avatarSimulation, swingTime, transferTime,
+                     swingHeightProp, m5InPlaceSteps, maxStepLength, duration);
+               m5CommandInput.submitMessage(footMessage);
+               m5Submitted = true;
+               System.out.println("[demo] M5 submitted footstep queue: " + footMessage.getFootstepDataList().size()
+                     + " steps (" + m5InPlaceSteps + " in-place + forward) at t=" + t);
+            }
+
             if (Math.abs(t - settleTime) < 0.5 && Double.isNaN(walkStartT))
             {
                walkStartX = rootJoint.getJointPose().getX();
@@ -467,6 +533,65 @@ public class Alice5WalkingDemo
 
       avatarSimulation.destroy();
       System.exit(pass ? 0 : 2);
+   }
+
+   /**
+    * M5 conservative footstep queue: {@code inPlaceSteps} alternating in-place steps (each foot lifts and
+    * lands at its current sole position) followed by forward steps advancing x by {@code stepLength} each,
+    * until the queue fills the remaining run time. Step timing is the conservative profile (swing/transfer)
+    * and swing arc height is the T2 value, set both as the list defaults and per-step. World-frame poses
+    * are taken from the live sole frames so the queue is anchored to the robot's actual stance.
+    */
+   static FootstepDataListMessage buildM5FootstepList(SCS2AvatarSimulation avatarSimulation, double swingTime,
+                                                      double transferTime, double swingHeight, int inPlaceSteps,
+                                                      double stepLength, double duration)
+   {
+      SideDependentList<MovingReferenceFrame> soleFrames = avatarSimulation.getControllerFullRobotModel().getSoleFrames();
+      FramePoint3D leftSole = new FramePoint3D(soleFrames.get(RobotSide.LEFT));
+      FramePoint3D rightSole = new FramePoint3D(soleFrames.get(RobotSide.RIGHT));
+      leftSole.changeFrame(ReferenceFrame.getWorldFrame());
+      rightSole.changeFrame(ReferenceFrame.getWorldFrame());
+      SideDependentList<FramePoint3D> startSole = new SideDependentList<>(leftSole, rightSole);
+
+      FootstepDataListMessage message = new FootstepDataListMessage();
+      message.setDefaultSwingDuration(swingTime);
+      message.setDefaultTransferDuration(transferTime);
+      message.setFinalTransferDuration(transferTime);
+
+      // Total step budget: keep the queue within the run window. Each step costs (swing+transfer) s, leave
+      // a settle margin. The forward steps fill whatever remains after the in-place phase.
+      double stepTime = swingTime + transferTime;
+      int totalSteps = Math.max(inPlaceSteps + 2, (int) ((duration - 4.0) / stepTime));
+      int forwardSteps = Math.max(2, totalSteps - inPlaceSteps);
+
+      RobotSide side = RobotSide.LEFT;
+      // In-place phase: alternate feet, each landing back at its own start sole position.
+      for (int i = 0; i < inPlaceSteps; i++)
+      {
+         FramePoint3D p = startSole.get(side);
+         addM5Footstep(message, side, p.getX(), p.getY(), swingHeight);
+         side = side.getOppositeSide();
+      }
+      // Forward phase: advance the stepping foot's x by stepLength relative to the previous same-side x.
+      // Increment x by stepLength on each step so the feet march forward together at stepLength spacing.
+      double advance = 0.0;
+      for (int i = 0; i < forwardSteps; i++)
+      {
+         advance += stepLength;
+         FramePoint3D p = startSole.get(side);
+         addM5Footstep(message, side, p.getX() + advance, p.getY(), swingHeight);
+         side = side.getOppositeSide();
+      }
+      return message;
+   }
+
+   static void addM5Footstep(FootstepDataListMessage message, RobotSide side, double x, double y, double swingHeight)
+   {
+      FootstepDataMessage footstep = message.getFootstepDataList().add();
+      footstep.setRobotSide(side.toByte());
+      footstep.getLocation().set(x, y, 0.0);
+      footstep.getOrientation().set(new Quaternion(0.0, 0.0, 0.0, 1.0));
+      footstep.setSwingHeight(swingHeight);
    }
 
    /**
