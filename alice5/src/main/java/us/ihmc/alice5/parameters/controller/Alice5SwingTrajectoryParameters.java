@@ -69,7 +69,10 @@ public class Alice5SwingTrajectoryParameters extends SwingTrajectoryParameters
    @Override
    public boolean useFinalHeelHeight()
    {
-      return true;
+      // SIM-EXT T2 (2nd round) sweep hook: heel-referenced final waypoint => heel-first plant, a
+      // suspect for the end-of-swing "hook drop" feel. -Dalice5.useFinalHeelHeight=false evaluates a
+      // sole-referenced touchdown. Default true (unchanged).
+      return Boolean.parseBoolean(System.getProperty("alice5.useFinalHeelHeight", "true"));
    }
 
    @Override
