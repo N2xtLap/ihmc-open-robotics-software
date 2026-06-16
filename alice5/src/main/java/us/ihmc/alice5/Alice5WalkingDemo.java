@@ -248,13 +248,27 @@ public class Alice5WalkingDemo
       double footDumpDt = Double.parseDouble(System.getProperty("alice5.footdump.dt", "0.005"));
       PrintWriter footCsv = null;
       us.ihmc.robotics.robotSide.SideDependentList<us.ihmc.mecano.frames.MovingReferenceFrame> soleFrames = null;
+      // SIM-EXT FT: per-foot foot-switch contact boolean (wrench or kinematic, whichever is active),
+      // logged next to the physical sole-frame z so the gate can score detection lead/lag offline.
+      YoVariable lFootContact = null;
+      YoVariable rFootContact = null;
+      YoVariable lFootForceZ = null;
+      YoVariable rFootForceZ = null;
       if (!footCsvPath.isEmpty())
       {
          soleFrames = avatarSimulation.getControllerFullRobotModel().getSoleFrames();
+         lFootContact = findFootContactBoolean(root, "left");
+         rFootContact = findFootContactBoolean(root, "right");
+         // SIM-EXT FT: sole-frame vertical ground reaction (loadcell-derived) from the wrench switch.
+         // Present only on the wrench path; on the kinematic path these stay null and log as NaN.
+         lFootForceZ = findFootForceZ(root, "left");
+         rFootForceZ = findFootForceZ(root, "right");
+         System.out.println("[demo] foot contact vars: left=" + fullName(lFootContact) + " right=" + fullName(rFootContact));
+         System.out.println("[demo] foot forceZ vars: left=" + fullName(lFootForceZ) + " right=" + fullName(rFootForceZ));
          try
          {
             footCsv = new PrintWriter(footCsvPath);
-            footCsv.println("t,lSoleZ,rSoleZ,walkingState");
+            footCsv.println("t,lSoleZ,rSoleZ,lContact,rContact,lForceZ,rForceZ,walkingState");
          }
          catch (Exception e)
          {
@@ -324,8 +338,12 @@ public class Alice5WalkingDemo
                            new us.ihmc.euclid.referenceFrame.FramePoint3D(soleFrames.get(us.ihmc.robotics.robotSide.RobotSide.RIGHT));
                      lSole.changeFrame(us.ihmc.euclid.referenceFrame.ReferenceFrame.getWorldFrame());
                      rSole.changeFrame(us.ihmc.euclid.referenceFrame.ReferenceFrame.getWorldFrame());
-                     footCsv.println(String.format(Locale.ROOT, "%.3f,%.6f,%.6f,%s",
-                           subT, lSole.getZ(), rSole.getZ(), walkingState.getValueAsString()));
+                     int lC = lFootContact != null && lFootContact.getValueAsDouble() != 0.0 ? 1 : 0;
+                     int rC = rFootContact != null && rFootContact.getValueAsDouble() != 0.0 ? 1 : 0;
+                     double lFz = lFootForceZ != null ? lFootForceZ.getValueAsDouble() : Double.NaN;
+                     double rFz = rFootForceZ != null ? rFootForceZ.getValueAsDouble() : Double.NaN;
+                     footCsv.println(String.format(Locale.ROOT, "%.3f,%.6f,%.6f,%d,%d,%.3f,%.3f,%s",
+                           subT, lSole.getZ(), rSole.getZ(), lC, rC, lFz, rFz, walkingState.getValueAsString()));
                   }
                }
             }
@@ -531,6 +549,54 @@ public class Alice5WalkingDemo
       for (YoVariable variable : registry.collectSubtreeVariables())
       {
          if (variable.getName().equals(name))
+            return variable;
+      }
+      return null;
+   }
+
+   /**
+    * SIM-EXT FT: per-foot contact boolean of the active foot switch, found by name. The wrench switch
+    * names it {@code <footName>FootHitGroundFiltered}, the kinematic switch {@code <footName>hitGround};
+    * the foot name carries the side token (left_ankle_roll / right_ankle_roll). Returns the filtered
+    * contact variable the gait state machine consumes, for either switch type, or null if absent.
+    */
+   static YoVariable findFootContactBoolean(YoRegistry registry, String sideToken)
+   {
+      YoVariable wrench = null;
+      YoVariable kinematic = null;
+      for (YoVariable variable : registry.collectSubtreeVariables())
+      {
+         String name = variable.getName();
+         if (!name.contains(sideToken))
+            continue;
+         if (name.endsWith("FootHitGroundFiltered"))
+            wrench = variable;
+         else if (name.endsWith("hitGround") && !name.endsWith("FootHitGround"))
+            kinematic = variable;
+      }
+      return wrench != null ? wrench : kinematic;
+   }
+
+   /**
+    * SIM-EXT FT: sole-frame vertical ground reaction component {@code <footName>ForceSoleFrameZ} of the
+    * wrench foot switch (the loadcell-derived load injected through the bridge). Used as the
+    * control-relevant contact truth (load bearing) for touchdown/liftoff scoring. Null on the
+    * kinematic path (that switch publishes no force vector).
+    */
+   static YoVariable findFootForceZ(YoRegistry registry, String sideToken)
+   {
+      // Target the wrench foot switch's own measured sole-frame reaction (namePrefix +
+      // "ForceSoleFrameZ"), not the QP WrenchVisualizer's DesiredExternalForceSoleFrameZ: require the
+      // full path to be under a WrenchBasedFootSwitch registry and the leaf to be exactly the foot
+      // prefix + ForceSoleFrameZ (no "Desired" / "External").
+      for (YoVariable variable : registry.collectSubtreeVariables())
+      {
+         String name = variable.getName();
+         if (!name.endsWith("ForceSoleFrameZ") || name.contains("Desired") || name.contains("External"))
+            continue;
+         if (!name.contains(sideToken))
+            continue;
+         if (variable.getFullNameString().contains("WrenchBasedFootSwitch"))
             return variable;
       }
       return null;

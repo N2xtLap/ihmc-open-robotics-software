@@ -20,7 +20,6 @@ import us.ihmc.commonWalkingControlModules.controllerCore.command.inverseKinemat
 import us.ihmc.commonWalkingControlModules.momentumBasedController.optimization.JointLimitParameters;
 import us.ihmc.commonWalkingControlModules.momentumBasedController.optimization.MomentumOptimizationSettings;
 import us.ihmc.commonWalkingControlModules.momentumBasedController.optimization.OneDoFJointPrivilegedConfigurationParameters;
-import us.ihmc.commonWalkingControlModules.sensors.footSwitch.WrenchBasedFootSwitchFactory;
 import us.ihmc.euclid.geometry.Pose3D;
 import us.ihmc.robotics.controllers.pidGains.GainCoupling;
 import us.ihmc.robotics.controllers.pidGains.PID3DGains;
@@ -816,11 +815,9 @@ public class Alice5WalkingControllerParameters extends WalkingControllerParamete
    @Override
    public FootSwitchFactory getFootSwitchFactory()
    {
-      WrenchBasedFootSwitchFactory factory = new WrenchBasedFootSwitchFactory();
-      factory.setDefaultContactThresholdForce(50.0);
-      factory.setDefaultCoPThresholdDistance(4.0e-3);
-      factory.setDefaultSecondContactThresholdForceIgnoringCoP(75.0);
-      return factory;
+      // SIM-EXT FT: wrench based by default (loadcell ground reaction), -Dalice5.footswitch=kinematic
+      // selects the kinematic fall-back. The state estimator reads the same property.
+      return Alice5FootSwitchSelection.createFootSwitchFactory();
    }
 
    @Override

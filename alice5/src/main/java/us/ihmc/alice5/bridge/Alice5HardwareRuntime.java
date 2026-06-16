@@ -52,6 +52,11 @@ public class Alice5HardwareRuntime
    private static int standingStreakSeconds = 0;
    private static double standingStreakMinRootZ = Double.POSITIVE_INFINITY;
 
+   // SIM-EXT FT: foot-wrench stale-hold observation while the loadcell validity bit drops.
+   private static boolean footWrenchEverStale = false;
+   private static double footWrenchStaleMinRootZ = Double.POSITIVE_INFINITY;
+   private static int footWrenchStaleSamples = 0;
+
    public static void main(String[] args)
    {
       double durationSeconds = Double.parseDouble(System.getProperty("alice5.runtime.duration", "30.0"));
@@ -210,6 +215,9 @@ public class Alice5HardwareRuntime
       System.out.println(String.format("GATE_M3_METRICS standing=%d rootZmin=%.4f", standing, rootZMin));
       if (standing >= STANDING_PASS_SECONDS)
          System.out.println("GATE_M3_STANDING_PASS");
+
+      System.out.println(String.format("GATE_FT_METRICS footWrenchEverStale=%b staleSamples=%d staleMinRootZ=%.4f",
+                                        footWrenchEverStale, footWrenchStaleSamples, footWrenchStaleMinRootZ));
    }
 
    private static void runStateSequencer(Alice5ShmCommunication communication,
@@ -345,9 +353,17 @@ public class Alice5HardwareRuntime
             int safetyState = communication.getSafetyState();
             String safetyName = Alice5ShmBridge.safetyStateName(safetyState);
             boolean frozen = communication.isStateFrozen();
+            boolean footWrenchStale = communication.isFootWrenchStale();
             Enum<?> hlcState = currentControllerState.get();
             String hlcName = hlcState == null ? "n/a" : hlcState.toString();
             double rootZ = fullRobotModel.getRootJoint().getJointPose().getZ();
+
+            if (footWrenchStale)
+            {
+               footWrenchEverStale = true;
+               footWrenchStaleSamples++;
+               footWrenchStaleMinRootZ = Math.min(footWrenchStaleMinRootZ, rootZ);
+            }
 
             synchronized (gateLock)
             {
@@ -369,7 +385,7 @@ public class Alice5HardwareRuntime
 
             String rtSummary = rtStats == null ? "" : " " + rtStats.updateAndSummarize(frozen);
 
-            System.out.println(String.format("RUNTIME t=%.1f state=%s hlc=%s rootZ(estimator pelvis z)=%.4f masterGain=%.2f desiredPosJoints=%d controllerTicks=%d frozen=" + frozen + " streak=" + standingStreakSeconds + rtSummary,
+            System.out.println(String.format("RUNTIME t=%.1f state=%s hlc=%s rootZ(estimator pelvis z)=%.4f masterGain=%.2f desiredPosJoints=%d controllerTicks=%d frozen=" + frozen + " footWrenchStale=" + footWrenchStale + " streak=" + standingStreakSeconds + rtSummary,
                                              elapsed,
                                              safetyName,
                                              hlcName,

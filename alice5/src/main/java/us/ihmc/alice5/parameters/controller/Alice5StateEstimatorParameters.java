@@ -3,7 +3,6 @@ package us.ihmc.alice5.parameters.controller;
 import us.ihmc.alice5.Alice5JointMap;
 import us.ihmc.alice5.Alice5SensorInformation;
 import us.ihmc.avatar.drcRobot.RobotTarget;
-import us.ihmc.commonWalkingControlModules.sensors.footSwitch.WrenchBasedFootSwitchFactory;
 import us.ihmc.robotics.partNames.ArmJointName;
 import us.ihmc.robotics.partNames.LegJointName;
 import us.ihmc.robotics.partNames.NeckJointName;
@@ -330,11 +329,9 @@ public class Alice5StateEstimatorParameters extends StateEstimatorParameters
    @Override
    public FootSwitchFactory getFootSwitchFactory()
    {
-      WrenchBasedFootSwitchFactory factory = new WrenchBasedFootSwitchFactory();
-      factory.setDefaultContactThresholdForce(50.0);
-      factory.setDefaultCoPThresholdDistance(4.0e-3);
-      factory.setDefaultSecondContactThresholdForceIgnoringCoP(75.0);
-      return factory;
+      // SIM-EXT FT: shares the -Dalice5.footswitch selection with the walking controller so the
+      // estimator and the gait state machine always use the same foot switch.
+      return Alice5FootSwitchSelection.createFootSwitchFactory();
    }
 
    @Override

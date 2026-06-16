@@ -34,6 +34,8 @@ public class Alice5ShmCommunication implements HardwareCommunicationInterface
    private static final long FAULT_NAN_BIT = 1L; // robot-side latched NaN-command fault (blocks re-engage)
    private static final long FIRST_STATE_OBSERVATION_NS = 500_000_000L; // 0.5 s
    private static final int ALL_JOINTS_ENABLE_MASK = 0x7FFFFF;
+   // foot_ft_validity bits (ABI v2): bit0/1 = left/right wrench valid, bit2/3 = left/right CoP valid.
+   private static final int[] WRENCH_VALID_BIT = {0x1, 0x2};
 
    private final Alice5ShmBridge bridge;
    private final String[] orderedJointNames;
@@ -56,6 +58,11 @@ public class Alice5ShmCommunication implements HardwareCommunicationInterface
    private final LowLevelState[] jointStates;
    private ImuData imuData;
    private final DMatrixRMaj[] footWrenches = new DMatrixRMaj[2];
+   // SIM-EXT FT: last valid sole-frame wrench per foot (IHMC order: Tx Ty Tz Fx Fy Fz) for stale-hold
+   // when the loadcell wrench validity bit drops, plus an alarm raised while a foot is held stale.
+   private final double[][] lastValidWrench = {new double[6], new double[6]};
+   private final boolean[] hasValidWrench = new boolean[2];
+   private final YoBoolean footWrenchStale = new YoBoolean("shmFootWrenchStale", registry);
 
    // Staleness / first state tracking (all in System.nanoTime base).
    private long lastSeqChangeNs = 0;
@@ -232,17 +239,48 @@ public class Alice5ShmCommunication implements HardwareCommunicationInterface
       // foot applies to the ground (MuJoCo force-sensor convention: Fz ~ -mg/2 at stance);
       // IHMC expects the ground reaction on the foot (Fz ~ +mg/2, WrenchBasedFootSwitch tests
       // forceZUp > threshold), so the wrench is negated here.
+      // SIM-EXT FT: gate the wrench on its validity bit. While valid, convert and cache it; when the
+      // loadcell wrench is flagged invalid (CAN timeout, saturation, ...) hold the last valid wrench
+      // and raise an alarm. Holding (not zeroing) keeps the foot switch correct for a foot that is
+      // physically still in contact: zeroing would tell the switch the foot left the ground and could
+      // destabilize the estimator. [HUMAN VERIFY] indefinite loss policy for real hardware (a foot
+      // that genuinely lifts during a long dropout would be held in contact); the bridge staleness
+      // watchdog still drops the whole stream to DAMPING when the state itself stops advancing.
+      boolean anyStale = false;
       for (int side = 0; side < 2; side++)
       {
          DMatrixRMaj wrench = footWrenches[side];
-         double[] ft = latestSnapshot.footFt[side];
-         wrench.set(0, 0, -ft[3]);
-         wrench.set(1, 0, -ft[4]);
-         wrench.set(2, 0, -ft[5]);
-         wrench.set(3, 0, -ft[0]);
-         wrench.set(4, 0, -ft[1]);
-         wrench.set(5, 0, -ft[2]);
+         double[] held = lastValidWrench[side];
+         boolean valid = (latestSnapshot.footFtValidity & WRENCH_VALID_BIT[side]) != 0;
+
+         if (valid)
+         {
+            double[] ft = latestSnapshot.footFt[side];
+            held[0] = -ft[3];
+            held[1] = -ft[4];
+            held[2] = -ft[5];
+            held[3] = -ft[0];
+            held[4] = -ft[1];
+            held[5] = -ft[2];
+            hasValidWrench[side] = true;
+         }
+         else if (!hasValidWrench[side])
+         {
+            // Never observed a valid wrench yet (e.g. invalid on the very first snapshot): there is
+            // nothing to hold, so report zero. This only lasts until the first valid sample.
+            for (int i = 0; i < 6; i++)
+               held[i] = 0.0;
+            anyStale = true;
+         }
+         else
+         {
+            anyStale = true;
+         }
+
+         for (int i = 0; i < 6; i++)
+            wrench.set(i, 0, held[i]);
       }
+      footWrenchStale.set(anyStale);
    }
 
    @Override
@@ -402,5 +440,10 @@ public class Alice5ShmCommunication implements HardwareCommunicationInterface
    public boolean isStateFrozen()
    {
       return stateFrozen.getValue();
+   }
+
+   public boolean isFootWrenchStale()
+   {
+      return footWrenchStale.getValue();
    }
 }
