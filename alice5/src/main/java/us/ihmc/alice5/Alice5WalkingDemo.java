@@ -328,6 +328,55 @@ public class Alice5WalkingDemo
          }
       }
 
+      // SIM-EXT VIZ-JOINT: optional joint q/qd/tau dump for offline render overlay (VIZ-JOINT).
+      // Core walking joints (both legs hip_p/knee_p/ankle_p + hip_r). For each: q [rad] = getQ(),
+      // qd [rad/s] = getQd() (true instantaneous, unlike the T3 finite-diff lower bound), and tau
+      // [Nm] = getTau() on the controller fullRobotModel (the inverse-dynamics joint torque the WBC
+      // solves). A desired-torque YoVariable (tau_d_<name>) is also looked up when present so the
+      // gate can compare the two tau sources; logged as NaN when absent. Off by default -> the M2/T3
+      // gate path is untouched (opt-in like the qpos/foot dumps). One-shot enumeration of every
+      // YoVariable whose name contains "knee_p" is printed at open so the real desired-torque
+      // variable name is discovered empirically rather than guessed.
+      String jointCsvPath = System.getProperty("alice5.jointdump.csv", "");
+      PrintWriter jointCsv = null;
+      String[] vizJointNames = {"l_hip_p", "l_knee_p", "l_ankle_p", "r_hip_p", "r_knee_p", "r_ankle_p", "l_hip_r", "r_hip_r"};
+      us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] vizJoints =
+            new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[vizJointNames.length];
+      YoVariable[] vizTauDesired = new YoVariable[vizJointNames.length];
+      if (!jointCsvPath.isEmpty())
+      {
+         for (int i = 0; i < vizJointNames.length; i++)
+         {
+            vizJoints[i] = avatarSimulation.getControllerFullRobotModel().getOneDoFJointByName(vizJointNames[i]);
+            // Desired joint torque the WBC commands, if exposed as a YoVariable (analogous to q_d_).
+            YoVariable tauD = findExact(root, "tau_d_" + vizJointNames[i]);
+            if (tauD == null)
+               tauD = findExact(root, "tau_" + vizJointNames[i]);
+            vizTauDesired[i] = tauD;
+         }
+         // One-shot: enumerate every YoVariable mentioning a knee_p joint so the desired-torque
+         // variable name (if any) is discovered from this single run instead of guessed.
+         System.out.println("[demo] VIZ-JOINT knee_p yoVariable enumeration:");
+         for (YoVariable v : root.collectSubtreeVariables())
+            if (v.getName().contains("knee_p"))
+               System.out.println("[viz-enum] " + v.getFullNameString());
+         System.out.println("[demo] VIZ-JOINT tau_d vars: " + Arrays.toString(vizTauDesired));
+         try
+         {
+            jointCsv = new PrintWriter(jointCsvPath);
+            StringBuilder header = new StringBuilder("t");
+            for (String name : vizJointNames)
+               header.append(",q_").append(name).append(",qd_").append(name)
+                     .append(",tau_").append(name).append(",taud_").append(name);
+            header.append(",walkingState");
+            jointCsv.println(header);
+         }
+         catch (Exception e)
+         {
+            System.out.println("[demo] joint csv open failed: " + e);
+         }
+      }
+
       boolean pass = true;
       List<String> failures = new ArrayList<>();
       double icpRmsSum = 0.0;
@@ -374,7 +423,7 @@ public class Alice5WalkingDemo
             }
 
             boolean ok = true;
-            if (qposCsv != null || footCsv != null)
+            if (qposCsv != null || footCsv != null || jointCsv != null)
             {
                // Sub-step the 1 s tick. Foot dump (touchdown vz) needs fine sampling (default 5 ms);
                // qpos video alone is fine at 20 ms. When the foot dump is on it sets the cadence.
@@ -410,6 +459,22 @@ public class Alice5WalkingDemo
                      double rFz = rFootForceZ != null ? rFootForceZ.getValueAsDouble() : Double.NaN;
                      footCsv.println(String.format(Locale.ROOT, "%.3f,%.6f,%.6f,%d,%d,%.3f,%.3f,%s",
                            subT, lSole.getZ(), rSole.getZ(), lC, rC, lFz, rFz, walkingState.getValueAsString()));
+                  }
+                  if (jointCsv != null)
+                  {
+                     StringBuilder row = new StringBuilder();
+                     row.append(String.format(Locale.ROOT, "%.3f", subT));
+                     for (int i = 0; i < vizJoints.length; i++)
+                     {
+                        us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics j = vizJoints[i];
+                        double q = j == null ? Double.NaN : j.getQ();
+                        double qd = j == null ? Double.NaN : j.getQd();
+                        double tau = j == null ? Double.NaN : j.getTau();
+                        double taud = vizTauDesired[i] == null ? Double.NaN : vizTauDesired[i].getValueAsDouble();
+                        row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.4f,%.4f", q, qd, tau, taud));
+                     }
+                     row.append(',').append(walkingState.getValueAsString());
+                     jointCsv.println(row);
                   }
                }
             }
@@ -482,6 +547,8 @@ public class Alice5WalkingDemo
          qposCsv.close();
       if (footCsv != null)
          footCsv.close();
+      if (jointCsv != null)
+         jointCsv.close();
 
       double distance = Double.isNaN(walkStartX) ? 0.0 : rootJoint.getJointPose().getX() - walkStartX;
       double walkDuration = Double.isNaN(walkStartT) ? 1.0 : duration - walkStartT;
