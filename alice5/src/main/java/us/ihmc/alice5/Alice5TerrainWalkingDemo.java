@@ -215,6 +215,46 @@ public class Alice5TerrainWalkingDemo
          }
       }
 
+      // SIM-EXT T4: optional joint q/qd/tau dump for offline render overlay (VIZ-JOINT format).
+      // Mirrors Alice5WalkingDemo's VIZ-JOINT dump exactly so render_qpos_joints.py reads it
+      // unchanged. Core sagittal leg joints + hip_r: q [rad]=getQ(), qd [rad/s]=getQd(),
+      // tau [Nm]=getTau() on the controller fullRobotModel, and a desired-torque YoVariable
+      // (tau_d_/tau_) logged as NaN when absent. Off by default -> the T1 gate path is untouched
+      // (opt-in like the qpos dump); the substep loop only engages when a dump CSV is requested.
+      double dumpSubDt = Double.parseDouble(System.getProperty("alice5.dumpSubDt", "0.02"));
+      int dumpNSub = (int) Math.round(1.0 / dumpSubDt);
+      String jointCsvPath = System.getProperty("alice5.jointdump.csv", "");
+      PrintWriter jointCsv = null;
+      String[] vizJointNames = {"l_hip_p", "l_knee_p", "l_ankle_p", "r_hip_p", "r_knee_p", "r_ankle_p", "l_hip_r", "r_hip_r"};
+      us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] vizJoints =
+            new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[vizJointNames.length];
+      YoVariable[] vizTauDesired = new YoVariable[vizJointNames.length];
+      if (!jointCsvPath.isEmpty())
+      {
+         for (int i = 0; i < vizJointNames.length; i++)
+         {
+            vizJoints[i] = avatarSimulation.getControllerFullRobotModel().getOneDoFJointByName(vizJointNames[i]);
+            YoVariable tauD = findExact(root, "tau_d_" + vizJointNames[i]);
+            if (tauD == null)
+               tauD = findExact(root, "tau_" + vizJointNames[i]);
+            vizTauDesired[i] = tauD;
+         }
+         try
+         {
+            jointCsv = new PrintWriter(jointCsvPath);
+            StringBuilder header = new StringBuilder("t");
+            for (String name : vizJointNames)
+               header.append(",q_").append(name).append(",qd_").append(name)
+                     .append(",tau_").append(name).append(",taud_").append(name);
+            header.append(",walkingState");
+            jointCsv.println(header);
+         }
+         catch (Exception e)
+         {
+            System.out.println("[demo] joint csv open failed: " + e);
+         }
+      }
+
       boolean pass = true;
       List<String> failures = new ArrayList<>();
       double icpRmsSum = 0.0;
@@ -262,20 +302,40 @@ public class Alice5TerrainWalkingDemo
             }
 
             boolean ok = true;
-            if (qposCsv != null)
+            if (qposCsv != null || jointCsv != null)
             {
-               for (int sub = 0; sub < 50 && ok; sub++)
+               for (int sub = 0; sub < dumpNSub && ok; sub++)
                {
-                  ok = scs.simulateNow(0.02);
-                  StringBuilder row = new StringBuilder();
-                  row.append(String.format(Locale.ROOT, "%.3f", t - 1.0 + 0.02 * (sub + 1)));
-                  var pose = rootJoint.getJointPose();
-                  row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.5f", pose.getX(), pose.getY(), pose.getZ()));
-                  var q = pose.getOrientation();
-                  row.append(String.format(Locale.ROOT, ",%.6f,%.6f,%.6f,%.6f", q.getS(), q.getX(), q.getY(), q.getZ()));
-                  for (us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics joint : recJoints)
-                     row.append(String.format(Locale.ROOT, ",%.5f", joint == null ? 0.0 : joint.getQ()));
-                  qposCsv.println(row);
+                  ok = scs.simulateNow(dumpSubDt);
+                  double subT = t - 1.0 + dumpSubDt * (sub + 1);
+                  if (qposCsv != null)
+                  {
+                     StringBuilder row = new StringBuilder();
+                     row.append(String.format(Locale.ROOT, "%.3f", subT));
+                     var pose = rootJoint.getJointPose();
+                     row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.5f", pose.getX(), pose.getY(), pose.getZ()));
+                     var q = pose.getOrientation();
+                     row.append(String.format(Locale.ROOT, ",%.6f,%.6f,%.6f,%.6f", q.getS(), q.getX(), q.getY(), q.getZ()));
+                     for (us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics joint : recJoints)
+                        row.append(String.format(Locale.ROOT, ",%.5f", joint == null ? 0.0 : joint.getQ()));
+                     qposCsv.println(row);
+                  }
+                  if (jointCsv != null)
+                  {
+                     StringBuilder row = new StringBuilder();
+                     row.append(String.format(Locale.ROOT, "%.3f", subT));
+                     for (int i = 0; i < vizJoints.length; i++)
+                     {
+                        us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics j = vizJoints[i];
+                        double q = j == null ? Double.NaN : j.getQ();
+                        double qd = j == null ? Double.NaN : j.getQd();
+                        double tau = j == null ? Double.NaN : j.getTau();
+                        double taud = vizTauDesired[i] == null ? Double.NaN : vizTauDesired[i].getValueAsDouble();
+                        row.append(String.format(Locale.ROOT, ",%.5f,%.5f,%.4f,%.4f", q, qd, tau, taud));
+                     }
+                     row.append(',').append(walkingState.getValueAsString());
+                     jointCsv.println(row);
+                  }
                }
             }
             else
@@ -334,6 +394,8 @@ public class Alice5TerrainWalkingDemo
 
       if (qposCsv != null)
          qposCsv.close();
+      if (jointCsv != null)
+         jointCsv.close();
 
       double distance = Double.isNaN(walkStartX) ? 0.0 : rootJoint.getJointPose().getX() - walkStartX;
       double walkDuration = Double.isNaN(walkStartT) ? 1.0 : duration - walkStartT;
