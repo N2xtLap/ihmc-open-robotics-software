@@ -339,7 +339,7 @@ public class Alice5WalkingDemo
       // variable name is discovered empirically rather than guessed.
       String jointCsvPath = System.getProperty("alice5.jointdump.csv", "");
       PrintWriter jointCsv = null;
-      String[] vizJointNames = {"l_hip_p", "l_knee_p", "l_ankle_p", "r_hip_p", "r_knee_p", "r_ankle_p", "l_hip_r", "r_hip_r"};
+      String[] vizJointNames = {"l_hip_p", "l_knee_p", "l_ankle_p", "l_ankle_r", "r_hip_p", "r_knee_p", "r_ankle_p", "r_ankle_r", "l_hip_r", "r_hip_r"};
       us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[] vizJoints =
             new us.ihmc.mecano.multiBodySystem.interfaces.OneDoFJointBasics[vizJointNames.length];
       YoVariable[] vizTauDesired = new YoVariable[vizJointNames.length];
